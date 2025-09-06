@@ -1,14 +1,22 @@
 import os
+import asyncio
+import logging
 import requests
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from telegram.utils.request import Request
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Lấy token từ biến môi trường (set BOT_TOKEN trước khi chạy)
+# ---------------- Logging ----------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ---------------- Config ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-API_URL = "https://lcd.helichain.com"
+LCD_ENDPOINT = "https://lcd.helichain.com"
 
-# Danh sách validator để tính unbond cụ thể
+# Danh sách validator cần theo dõi unbonding
 VALIDATORS = [
     "helivaloper189q4atq095x22lpcrg0s0yxryeekm26pjgrem5",
     "helivaloper18ce7rgzq0tw24jdm6qvqvjsg0uy7tj5p37r3tk",
@@ -22,119 +30,101 @@ VALIDATORS = [
     "helivaloper17vvnar3rn66f8hlrkznxp4xt23xapu0l893jvn"
 ]
 
-# --- Các hàm xử lý lệnh ---
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Xin chào 👋! Bot HELI đã sẵn sàng.")
-
-def ping(update: Update, context: CallbackContext):
-    update.message.reply_text("Pong! ✅ Bot đang online.")
-
-def staked(update: Update, context: CallbackContext):
+# ---------------- Helper ----------------
+def get_json(url):
     try:
-        r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/pool")
-        data = r.json()
-        bonded = int(data["pool"]["bonded_tokens"]) / 1e6
-        update.message.reply_text(f"🔒 Tổng HELI đang staked: {bonded:,.0f} HELI")
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        return r.json()
     except Exception as e:
-        update.message.reply_text(f"Lỗi khi lấy dữ liệu stake: {e}")
+        logger.error(f"Lỗi khi gọi API {url}: {e}")
+        return None
 
-def unstake(update: Update, context: CallbackContext):
-    try:
-        total_unbond = 0
-        for val in VALIDATORS:
-            r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/validators/{val}/unbonding_delegations")
-            data = r.json()
-            entries = data.get("unbonding_responses", [])
-            for entry in entries:
-                for balance in entry.get("entries", []):
-                    total_unbond += int(balance.get("balance", "0"))
-        total_unbond = total_unbond / 1e6
-        update.message.reply_text(f"🔓 Tổng HELI đang unstake (unbonding): {total_unbond:,.0f} HELI")
-    except Exception as e:
-        update.message.reply_text(f"Lỗi khi lấy dữ liệu unstake: {e}")
+# ---------------- Commands ----------------
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Bot đang hoạt động!")
 
-def validator(update: Update, context: CallbackContext):
-    try:
-        r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED")
-        data = r.json()
-        total = len(data.get("validators", []))
-        jailed = sum(1 for v in data.get("validators", []) if v.get("jailed"))
-        update.message.reply_text(f"👨‍💻 Tổng số validator: {total}\n🚨 Jailed: {jailed} ({jailed/total*100:.2f}%)")
-    except Exception as e:
-        update.message.reply_text(f"Lỗi khi lấy dữ liệu validator: {e}")
+async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED")
+    jailed = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_UNBONDED")
 
-def ratio(update: Update, context: CallbackContext):
-    try:
-        r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/pool")
-        data = r.json()
+    total = 0
+    jailed_count = 0
+
+    if data and "validators" in data:
+        total += len(data["validators"])
+    if jailed and "validators" in jailed:
+        jailed_count += len(jailed["validators"])
+        total += len(jailed["validators"])
+
+    await update.message.reply_text(
+        f"📊 Tổng validator: {total}\n"
+        f"🚨 Validator jailed: {jailed_count} ({(jailed_count/total*100 if total else 0):.2f}%)"
+    )
+
+async def staked(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/pool")
+    if data and "pool" in data:
         bonded = int(data["pool"]["bonded_tokens"]) / 1e6
         not_bonded = int(data["pool"]["not_bonded_tokens"]) / 1e6
-        ratio_val = bonded / (bonded + not_bonded) * 100 if bonded + not_bonded > 0 else 0
-        update.message.reply_text(f"📈 Tỷ lệ stake hiện tại: {ratio_val:.2f}%")
-    except Exception as e:
-        update.message.reply_text(f"Lỗi khi tính tỷ lệ stake: {e}")
-
-def status(update: Update, context: CallbackContext):
-    try:
-        # Pool info
-        r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/pool")
-        pool = r.json()["pool"]
-        bonded = int(pool["bonded_tokens"]) / 1e6
-        not_bonded = int(pool["not_bonded_tokens"]) / 1e6
-        ratio_val = bonded / (bonded + not_bonded) * 100 if bonded + not_bonded > 0 else 0
-
-        # Validator info
-        r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED")
-        validators = r.json().get("validators", [])
-        total_val = len(validators)
-        jailed = sum(1 for v in validators if v.get("jailed"))
-
-        # Unstake từ unbonding_delegations
-        total_unbond = 0
-        for val in VALIDATORS:
-            r = requests.get(f"{API_URL}/cosmos/staking/v1beta1/validators/{val}/unbonding_delegations")
-            data = r.json()
-            entries = data.get("unbonding_responses", [])
-            for entry in entries:
-                for balance in entry.get("entries", []):
-                    total_unbond += int(balance.get("balance", "0"))
-        total_unbond = total_unbond / 1e6
-
-        msg = (
-            f"📊 HELI Network Status\n\n"
-            f"🔒 Đang stake: {bonded:,.0f} HELI\n"
-            f"🔓 Đang unstake: {total_unbond:,.0f} HELI\n"
-            f"💤 Not bonded: {not_bonded:,.0f} HELI\n"
-            f"📈 Tỷ lệ stake: {ratio_val:.2f}%\n\n"
-            f"👨‍💻 Tổng validator: {total_val}\n"
-            f"🚨 Validator jailed: {jailed} ({jailed/total_val*100:.2f}%)"
+        total = bonded + not_bonded
+        ratio = (bonded / total * 100) if total > 0 else 0
+        await update.message.reply_text(
+            f"💎 Đã stake: {bonded:,.0f} HELI\n"
+            f"📌 Chưa stake: {not_bonded:,.0f} HELI\n"
+            f"📈 Tỷ lệ stake: {ratio:.2f}%"
         )
+    else:
+        await update.message.reply_text("⚠️ Không lấy được dữ liệu staking.")
 
-        update.message.reply_text(msg)
-    except Exception as e:
-        update.message.reply_text(f"Lỗi khi lấy dữ liệu status: {e}")
+async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    total_unbond = 0
+    for val in VALIDATORS:
+        data = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators/{val}/unbonding_delegations")
+        if data and "unbonding_responses" in data:
+            for u in data["unbonding_responses"]:
+                for entry in u["entries"]:
+                    total_unbond += int(entry["balance"])
 
-# --- Khởi chạy bot ---
+    heli_unbond = total_unbond / 1e6
+    await update.message.reply_text(f"🔓 Tổng HELI đang unstake (unbonding): {heli_unbond:,.0f} HELI")
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Gộp thông tin /validator + /staked
+    pool = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/pool")
+    bonded = not_bonded = ratio = 0
+    if pool and "pool" in pool:
+        bonded = int(pool["pool"]["bonded_tokens"]) / 1e6
+        not_bonded = int(pool["pool"]["not_bonded_tokens"]) / 1e6
+        total = bonded + not_bonded
+        ratio = (bonded / total * 100) if total > 0 else 0
+
+    val_data = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED")
+    jailed_data = get_json(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_UNBONDED")
+
+    total_val = len(val_data["validators"]) if val_data and "validators" in val_data else 0
+    jailed_count = len(jailed_data["validators"]) if jailed_data and "validators" in jailed_data else 0
+
+    await update.message.reply_text(
+        f"📊 Validator: {total_val} | 🚨 Jailed: {jailed_count}\n"
+        f"💎 Đã stake: {bonded:,.0f} HELI ({ratio:.2f}%)"
+    )
+
+# ---------------- Main ----------------
 def main():
     if not BOT_TOKEN:
-        print("❌ Lỗi: chưa cấu hình biến môi trường BOT_TOKEN")
-        return
+        raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
 
-    req = Request(connect_timeout=10, read_timeout=20)
-    updater = Updater(BOT_TOKEN, use_context=True, request_kwargs={'read_timeout': 20, 'connect_timeout': 10})
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("ping", ping))
-    dp.add_handler(CommandHandler("staked", staked))
-    dp.add_handler(CommandHandler("unstake", unstake))
-    dp.add_handler(CommandHandler("validator", validator))
-    dp.add_handler(CommandHandler("ratio", ratio))
-    dp.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("validator", validator))
+    app.add_handler(CommandHandler("staked", staked))
+    app.add_handler(CommandHandler("unstake", unstake))
+    app.add_handler(CommandHandler("status", status))
 
-    print("🤖 Bot HELI đã khởi động...")
-    updater.start_polling()
-    updater.idle()
+    logger.info("🚀 Bot HELI đã khởi chạy...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
