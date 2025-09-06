@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import requests
 from flask import Flask
 from telegram import Update
@@ -12,36 +13,54 @@ if not BOT_TOKEN:
 
 LCD_ENDPOINT = "https://lcd.helichain.com"
 
+# ====== CACHE SYSTEM ======
+cache = {}
+CACHE_TTL = 30  # giây
+
+def get_cached(key, fetch_func):
+    now = time.time()
+    if key in cache and now - cache[key]["time"] < CACHE_TTL:
+        return cache[key]["data"]
+    data = fetch_func()
+    cache[key] = {"data": data, "time": now}
+    return data
+
 # ====== TELEGRAM COMMANDS ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 HELI Bot đã khởi động trên Render Free!")
+    await update.message.reply_text("🤖 HELI Bot đã khởi động!")
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong")
 
 async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
+    msg = "⏳ Đang xử lý dữ liệu validator..."
+    sent = await update.message.reply_text(msg)
+
+    def fetch():
         resp = requests.get(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators")
         data = resp.json().get("validators", [])
         total = len(data)
         jailed = sum(1 for v in data if v.get("jailed"))
-        msg = f"📊 Tổng Validator: {total}\n🚫 Bị jail: {jailed} ({jailed/total:.2%})"
-    except Exception as e:
-        msg = f"❌ Lỗi: {e}"
-    await update.message.reply_text(msg)
+        return f"📊 Tổng Validator: {total}\n🚫 Bị jail: {jailed} ({jailed/total:.2%})"
+
+    result = get_cached("validator", fetch)
+    await sent.edit_text(result)
 
 async def staked(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
+    sent = await update.message.reply_text("⏳ Đang tính toán tổng staked...")
+
+    def fetch():
         resp = requests.get(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/pool")
         pool = resp.json().get("pool", {})
         bonded = int(pool.get("bonded_tokens", 0)) / 1e6
-        msg = f"🔒 Tổng HELI đã bonded: {bonded:,.2f} HELI"
-    except Exception as e:
-        msg = f"❌ Lỗi: {e}"
-    await update.message.reply_text(msg)
+        return f"🔒 Tổng HELI đã bonded: {bonded:,.2f} HELI"
+
+    result = get_cached("staked", fetch)
+    await sent.edit_text(result)
 
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Danh sách validator cần tính
+    sent = await update.message.reply_text("⏳ Đang quét dữ liệu unstake...")
+
     validators = [
         "helivaloper189q4atq095x22lpcrg0s0yxryeekm26pjgrem5",
         "helivaloper18ce7rgzq0tw24jdm6qvqvjsg0uy7tj5p37r3tk",
@@ -54,25 +73,27 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "helivaloper172vwf05zweuj6g2lpcq0etywgk0ccs5gtru5tp",
         "helivaloper17vvnar3rn66f8hlrkznxp4xt23xapu0l893jvn",
     ]
-    total_unbond = 0
-    try:
+
+    def fetch():
+        total_unbond = 0
         for val in validators:
             url = f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators/{val}/unbonding_delegations"
             resp = requests.get(url)
             if resp.status_code == 200:
                 data = resp.json().get("unbonding_responses", [])
                 for d in data:
-                    entries = d.get("entries", [])
-                    for e in entries:
+                    for e in d.get("entries", []):
                         balance = int(e.get("balance", 0)) / 1e6
                         total_unbond += balance
-        msg = f"🔓 Tổng HELI đang unstake (unbonding): {total_unbond:,.2f} HELI"
-    except Exception as e:
-        msg = f"❌ Lỗi: {e}"
-    await update.message.reply_text(msg)
+        return f"🔓 Tổng HELI đang unstake (unbonding): {total_unbond:,.2f} HELI"
+
+    result = get_cached("unstake", fetch)
+    await sent.edit_text(result)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
+    sent = await update.message.reply_text("⏳ Đang tổng hợp thông tin hệ thống...")
+
+    def fetch():
         resp_val = requests.get(f"{LCD_ENDPOINT}/cosmos/staking/v1beta1/validators")
         data = resp_val.json().get("validators", [])
         total = len(data)
@@ -82,15 +103,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool = resp_pool.json().get("pool", {})
         bonded = int(pool.get("bonded_tokens", 0)) / 1e6
 
-        msg = (
+        return (
             f"📊 Hệ thống HELI\n"
             f"- Tổng Validator: {total}\n"
             f"- Jail: {jailed} ({jailed/total:.2%})\n"
             f"- 🔒 Bonded: {bonded:,.2f} HELI"
         )
-    except Exception as e:
-        msg = f"❌ Lỗi: {e}"
-    await update.message.reply_text(msg)
+
+    result = get_cached("status", fetch)
+    await sent.edit_text(result)
 
 # ====== BOT RUNNER ======
 def run_bot():
@@ -109,6 +130,10 @@ flask_app = Flask(__name__)
 @flask_app.route("/")
 def home():
     return "🚀 HELI Bot đang chạy trên Render Free!"
+
+@flask_app.route("/health")
+def health():
+    return {"status": "ok"}, 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
