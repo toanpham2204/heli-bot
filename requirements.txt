@@ -1,9 +1,4 @@
-<<<<<<< HEAD
 python-telegram-bot==20.3
 requests==2.32.3
 schedule==1.2.1
-=======
-python-telegram-bot==13.15
-requests
-schedule
->>>>>>> a50a6b243d9077e42e333b8edaa8d5552170f5bf
+flask==3.0.3
