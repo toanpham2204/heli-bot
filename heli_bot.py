@@ -17,7 +17,7 @@ PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
-    raise ValueError(⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
+    raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
 
 # -------------------------------
 # Helper Functions
