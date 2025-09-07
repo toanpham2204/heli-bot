@@ -1,4 +1,6 @@
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import requests
 from telegram import Update
@@ -66,6 +68,42 @@ def get_unbonding_data():
         logging.error(f"Lỗi lấy dữ liệu unbonding: {e}")
         return {}
 
+def _get_validators_list():
+    """Trả về danh sách valoper của tất cả validator bonded."""
+    try:
+        url = f"{LCD}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=2000"
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        vals = r.json().get("validators", [])
+        return [v.get("operator_address") for v in vals if v.get("operator_address")]
+    except Exception as e:
+        logging.error(f"Lỗi lấy validators: {e}")
+        return []
+
+def _sum_unbonding_for_validator(valoper: str) -> int:
+    """Trả về tổng unbonding (uheli) từ tất cả delegator trong 1 validator."""
+    try:
+        url = f"{LCD}/cosmos/staking/v1beta1/validators/{valoper}/unbonding_delegations?pagination.limit=2000"
+        r = requests.get(url, timeout=15)
+        if r.status_code != 200:
+            return 0
+        data = r.json().get("unbonding_responses", [])
+        total = 0
+        for item in data:
+            for entry in item.get("entries", []):
+                bal = entry.get("balance", "0")
+                try:
+                    total += int(bal)
+                except:
+                    try:
+                        total += int(float(bal))
+                    except:
+                        pass
+        return total
+    except Exception as e:
+        logging.error(f"Lỗi lấy unbonding cho {valoper}: {e}")
+        return 0
+
 # -------------------------------
 # Commands
 # -------------------------------
@@ -102,16 +140,31 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Lỗi khi lấy trạng thái mạng: {e}")
 
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = get_unbonding_data()
-    total_unbonding = 0
-    try:
-        unbondings = data.get("unbonding_responses", [])
-        for ub in unbondings:
-            for entry in ub.get("entries", []):
-                total_unbonding += int(entry.get("balance", 0)) / 1e6
-    except Exception as e:
-        logging.error(f"Lỗi tính toán unstake: {e}")
-    await update.message.reply_text(f"🔓 Tổng HELI đang unstake: {total_unbonding:,.2f} HELI")
+    """Tính tổng HELI unbonding từ tất cả delegator trên toàn bộ validators."""
+    sent = await update.message.reply_text("⏳ Đang tính tổng unbonding từ tất cả validators...")
+    loop = asyncio.get_running_loop()
+
+    def compute_total():
+        vals = _get_validators_list()
+        if not vals:
+            return None, "Không lấy được danh sách validator"
+        total = 0
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = {ex.submit(_sum_unbonding_for_validator, v): v for v in vals}
+            for fut in as_completed(futures):
+                try:
+                    total += fut.result()
+                except Exception as e:
+                    logging.error(f"Lỗi khi cộng unbonding: {e}")
+        return total, None
+
+    total_uheli, err = await loop.run_in_executor(None, compute_total)
+    if err:
+        await sent.edit_text(f"⚠️ {err}")
+        return
+
+    heli_amount = (total_uheli or 0) / 1e6
+    await sent.edit_text(f"🔓 Tổng HELI đang unbonding trên toàn mạng: {heli_amount:,.6f} HELI")
 
 async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = get_unbonding_data()
@@ -181,16 +234,28 @@ async def supply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        url = "https://api.coingecko.com/api/v3/simple/price"
+        # Ưu tiên lấy giá từ MEXC
+        url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
+        r = requests.get(url, timeout=10).json()
+        price_usd = float(r.get("price", 0))
+
+        if price_usd > 0:
+            await update.message.reply_text(f"💲 Giá HELI hiện tại (MEXC): ${price_usd:,.4f}")
+            return
+
+        # Fallback CoinGecko
+        url_cg = "https://api.coingecko.com/api/v3/simple/price"
         params = {"ids": "heli", "vs_currencies": "usd"}
-        r = requests.get(url, params=params, timeout=10).json()
+        r = requests.get(url_cg, params=params, timeout=10).json()
         price_usd = r.get("heli", {}).get("usd")
+
         if price_usd:
-            await update.message.reply_text(f"💲 Giá HELI hiện tại: ${price_usd:,.4f}")
+            await update.message.reply_text(f"💲 Giá HELI hiện tại (CoinGecko): ${price_usd:,.4f}")
         else:
-            await update.message.reply_text("⚠️ Không lấy được giá HELI.")
+            await update.message.reply_text("⚠️ Không lấy được giá HELI từ API.")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy giá: {e}")
+
 
 # -------------------------------
 # Main
