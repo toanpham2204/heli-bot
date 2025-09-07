@@ -13,9 +13,11 @@ logging.basicConfig(
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 LCD = "https://lcd.helichain.com"
+PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
+WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
-    raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
+    raise ValueError(⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
 
 # -------------------------------
 # Helper Functions
@@ -196,6 +198,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Đăng ký command
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping))
@@ -208,7 +211,20 @@ def main():
     app.add_handler(CommandHandler("price", price))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
-    app.run_polling()
+
+    # Render: Webhook
+    if WEBHOOK_URL:
+        logging.info(f"🔗 Sử dụng webhook: {WEBHOOK_URL}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
+        )
+    else:
+        # Local: Polling
+        logging.info("🔄 Chạy bằng polling (local mode)")
+        app.run_polling()
 
 if __name__ == "__main__":
     main()
