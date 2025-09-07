@@ -270,6 +270,25 @@ async def staked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy dữ liệu staking: {e}")
 
+async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Thống kê tổng số validator và số node bị jail."""
+    try:
+        url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+        r = requests.get(url, timeout=15).json()
+        vals = r.get("validators", [])
+
+        total = len(vals)
+        jailed = sum(1 for v in vals if v.get("jailed", False))
+        bonded = sum(1 for v in vals if v.get("status") == "BOND_STATUS_BONDED" and not v.get("jailed", False))
+
+        msg = (
+            f"🖥️ Tổng số validator: {total}\n"
+            f"✅ Đang hoạt động (bonded): {bonded}\n"
+            f"🚨 Bị jail: {jailed}"
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy thông tin validator: {e}")
 
 
 # -------------------------------
@@ -290,6 +309,7 @@ def main():
     app.add_handler(CommandHandler("supply", supply))
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("staked", staked))
+    app.add_handler(CommandHandler("validator", validator))
 
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
