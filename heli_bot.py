@@ -167,20 +167,24 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await sent.edit_text(f"🔓 Tổng HELI đang unbonding trên toàn mạng: {heli_amount:,.6f} HELI")
 
 async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = get_unbonding_data()
-    unbondings = data.get("unbonding_responses", [])
-    wallet_count = len(unbondings)
-    if wallet_count == 0:
-        await update.message.reply_text("✅ Hiện không có ví nào unbonding.")
-        return
-    reply = f"📋 Có {wallet_count} ví đang unbonding (hiển thị 10 ví đầu):\n\n"
-    for ub in unbondings[:10]:
-        delegator = ub.get("delegator_address", "N/A")
-        total = sum(int(e.get("balance", 0)) for e in ub.get("entries", [])) / 1e6
-        reply += f"🔹 {delegator}: {total:,.2f} HELI\n"
-    if wallet_count > 10:
-        reply += f"\n... và {wallet_count-10} ví khác."
-    await update.message.reply_text(reply)
+    """Đếm tổng số ví đang unbonding trên toàn bộ validators."""
+    try:
+        vals_url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+        vals = requests.get(vals_url, timeout=15).json().get("validators", [])
+        wallets = set()
+
+        for v in vals:
+            valoper = v.get("operator_address")
+            url = f"{LCD}/cosmos/staking/v1beta1/validators/{valoper}/unbonding_delegations?pagination.limit=2000"
+            r = requests.get(url, timeout=15).json()
+            for resp in r.get("unbonding_responses", []):
+                wallets.add(resp.get("delegator_address"))
+
+        count = len(wallets)
+        await update.message.reply_text(f"🔓 Tổng số ví đang unbonding: {count}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy danh sách unbonding: {e}")
+
 
 async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = get_pool()
@@ -256,6 +260,17 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy giá: {e}")
 
+async def staked(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        url = f"{LCD}/cosmos/staking/v1beta1/pool"
+        r = requests.get(url, timeout=10).json()
+        bonded = int(r.get("pool", {}).get("bonded_tokens", 0))
+        heli_amount = bonded / 1e6
+        await update.message.reply_text(f"💎 Tổng HELI đang staking: {heli_amount:,.2f} HELI")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy dữ liệu staking: {e}")
+
+
 
 # -------------------------------
 # Main
@@ -274,6 +289,8 @@ def main():
     app.add_handler(CommandHandler("apy", apy))
     app.add_handler(CommandHandler("supply", supply))
     app.add_handler(CommandHandler("price", price))
+    app.add_handler(CommandHandler("staked", staked))
+
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
