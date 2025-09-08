@@ -7,7 +7,8 @@ services:
     autoDeploy: true
     envVars:
       - key: BOT_TOKEN
-        sync: false   # thiết lập trong dashboard Render
+        sync: false
       - key: WEBHOOK_URL
-        sync: false   # thiết lập webhook (nếu có)
-
+        value: https://heli-bot.onrender.com
+      - key: RENDER
+        value: "true"

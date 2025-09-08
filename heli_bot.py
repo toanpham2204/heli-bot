@@ -405,18 +405,16 @@ def main():
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
-    # Render: Webhook
-    if WEBHOOK_URL:
-        logging.info(f"🔗 Sử dụng webhook: {WEBHOOK_URL}")
+    # ✅ Chạy webhook nếu trên Render, còn không thì dùng polling
+    if os.getenv("RENDER") == "true":
+        port = int(os.environ.get("PORT", "10000"))
         app.run_webhook(
             listen="0.0.0.0",
-            port=PORT,
+            port=port,
             url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
         )
     else:
-        # Local: Polling
-        logging.info("🔄 Chạy bằng polling (local mode)")
         app.run_polling()
 
 if __name__ == "__main__":
