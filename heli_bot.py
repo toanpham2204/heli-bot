@@ -1,6 +1,7 @@
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import logging
 import requests
 from telegram import Update
@@ -20,6 +21,50 @@ WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
+
+# -------------------------------
+# Quản lý User
+# -------------------------------
+ADMIN_ID = 2028673755
+ALLOWED_USERS = {ADMIN_ID}
+
+def is_allowed(user_id: int) -> bool:
+    return user_id in ALLOWED_USERS
+
+async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_text(f"🆔 User ID của bạn: {user.id}\n👤 Username: @{user.username}")
+
+async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 Bạn không có quyền thêm user.")
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Dùng: /grant <user_id>")
+        return
+    try:
+        new_id = int(context.args[0])
+        ALLOWED_USERS.add(new_id)
+        await update.message.reply_text(f"✅ Đã cấp quyền cho user {new_id}")
+    except ValueError:
+        await update.message.reply_text("⚠️ User ID không hợp lệ.")
+
+async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 Bạn không có quyền xoá user.")
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Dùng: /revoke <user_id>")
+        return
+    try:
+        rem_id = int(context.args[0])
+        if rem_id in ALLOWED_USERS:
+            ALLOWED_USERS.remove(rem_id)
+            await update.message.reply_text(f"✅ Đã xoá quyền user {rem_id}")
+        else:
+            await update.message.reply_text("⚠️ User này chưa được cấp quyền.")
+    except ValueError:
+        await update.message.reply_text("⚠️ User ID không hợp lệ.")
 
 # -------------------------------
 # Helper Functions
@@ -113,10 +158,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "📌 Danh sách lệnh:\n\n"
+	"/whoami - Lấy user ID\n"
+        "/grant <id> - Cấp quyền user (admin)\n"
+        "/revoke <id> - Thu hồi quyền user (admin)\n"
+        "/staked - Tổng HELI staking\n"
         "/ping - Kiểm tra bot\n"
         "/status - Trạng thái mạng\n"
-        "/unstake - Tổng HELI đang unbonding\n"
-        "/unbonding_wallets - Liệt kê 10 ví unbonding\n"
+        "/unstake - Tổng HELI đang unstake\n"
+        "/unbonding_wallets - Số ví đang unbonding\n"
+	"/validator - Thống kê validator & jail\n"
         "/bonded_ratio - Tỷ lệ HELI bonded\n"
         "/apy - APY staking (theo validator top 1)\n"
         "/supply - Tổng cung HELI\n"
@@ -128,6 +178,9 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot đang hoạt động!")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     try:
         url = f"{LCD}/cosmos/base/tendermint/v1beta1/blocks/latest"
         r = requests.get(url, timeout=10).json()
@@ -140,6 +193,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Lỗi khi lấy trạng thái mạng: {e}")
 
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     """Tính tổng HELI unbonding từ tất cả delegator trên toàn bộ validators."""
     sent = await update.message.reply_text("⏳ Đang tính tổng unbonding từ tất cả validators...")
     loop = asyncio.get_running_loop()
@@ -167,6 +223,9 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await sent.edit_text(f"🔓 Tổng HELI đang unbonding trên toàn mạng: {heli_amount:,.6f} HELI")
 
 async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     """Đếm tổng số ví đang unbonding trên toàn bộ validators."""
     try:
         vals_url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
@@ -187,6 +246,9 @@ async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     pool = get_pool()
     bonded = int(pool.get("bonded_tokens", 0)) / 1e6
     not_bonded = int(pool.get("not_bonded_tokens", 0)) / 1e6
@@ -200,6 +262,9 @@ async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     pool = get_pool()
     bonded = int(pool.get("bonded_tokens", 0))
     not_bonded = int(pool.get("not_bonded_tokens", 0))
@@ -224,6 +289,9 @@ async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def supply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     try:
         url = f"{LCD}/cosmos/bank/v1beta1/supply"
         r = requests.get(url, timeout=10).json()
@@ -237,6 +305,9 @@ async def supply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Lỗi khi lấy supply: {e}")
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     try:
         # Ưu tiên lấy giá từ MEXC
         url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
@@ -261,16 +332,17 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Lỗi khi lấy giá: {e}")
 
 async def staked(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        url = f"{LCD}/cosmos/staking/v1beta1/pool"
-        r = requests.get(url, timeout=10).json()
-        bonded = int(r.get("pool", {}).get("bonded_tokens", 0))
-        heli_amount = bonded / 1e6
-        await update.message.reply_text(f"💎 Tổng HELI đang staking: {heli_amount:,.2f} HELI")
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy dữ liệu staking: {e}")
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+    pool = get_pool()
+    bonded = int(pool.get("bonded_tokens", 0)) / 1e6
+    await update.message.reply_text(f"💎 Tổng HELI đang staking: {bonded:,.2f} HELI")
 
 async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     """Thống kê tổng số validator và số node bị jail."""
     try:
         url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
@@ -297,6 +369,11 @@ async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Lệnh quản lý user
+    app.add_handler(CommandHandler("whoami", whoami))
+    app.add_handler(CommandHandler("grant", grant))
+    app.add_handler(CommandHandler("revoke", revoke))
+
     # Đăng ký command
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -311,6 +388,20 @@ def main():
     app.add_handler(CommandHandler("staked", staked))
     app.add_handler(CommandHandler("validator", validator))
 
+    # Scheduler: gửi giá HELI hằng ngày
+    scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
+
+    async def send_daily_price():
+        try:
+            r = requests.get("https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT", timeout=10).json()
+            price_usd = float(r.get("price", 0))
+            for uid in ALLOWED_USERS:
+                await app.bot.send_message(chat_id=uid, text=f"📢 Giá HELI hôm nay: ${price_usd:,.4f}")
+        except Exception as e:
+            logging.error(f"Lỗi gửi giá: {e}")
+
+    scheduler.add_job(send_daily_price, "cron", hour=9, minute=0)
+    scheduler.start()
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
