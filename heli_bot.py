@@ -156,22 +156,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Xin chào! Bot Heli đã sẵn sàng.\nGõ /help để xem danh sách lệnh.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "📌 Danh sách lệnh:\n\n"
-	"/whoami - Lấy user ID\n"
-        "/grant <id> - Cấp quyền user (admin)\n"
-        "/revoke <id> - Thu hồi quyền user (admin)\n"
-        "/staked - Tổng HELI staking\n"
-        "/ping - Kiểm tra bot\n"
-        "/status - Trạng thái mạng\n"
-        "/unstake - Tổng HELI đang unstake\n"
-        "/unbonding_wallets - Số ví đang unbonding\n"
-	"/validator - Thống kê validator & jail\n"
-        "/bonded_ratio - Tỷ lệ HELI bonded\n"
-        "/apy - APY staking (theo validator top 1)\n"
-        "/supply - Tổng cung HELI\n"
-        "/price - Giá HELI hiện tại\n"
-    )
+    help_text = """
+📖 Danh sách lệnh khả dụng:
+
+/help - Xem hướng dẫn
+/whoami - Hiển thị User ID của bạn
+/grant <id> - Cấp quyền cho user (admin)
+/revoke <id> - Thu hồi quyền user (admin)
+/staked - Xem tổng HELI đã staking
+/unstake - Xem tổng HELI đang unstake
+/unbonding_wallets - Xem số ví đang unstake
+/validator - Danh sách validator & trạng thái jail
+/status - Trạng thái mạng HeliChain
+/price - Giá HELI hiện tại
+/sendprice - Gửi giá HELI ngay lập tức
+/supply - Tổng cung HELI
+/apy - Tính APY staking (đã trừ commission)
+"""
     await update.message.reply_text(msg)
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -366,8 +367,10 @@ async def sendprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
-    await send_daily_price()  # gọi lại hàm scheduler
-    await update.message.reply_text("✅ Đã gửi giá HELI ngay lập tức.")
+    url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
+    r = requests.get(url, timeout=10).json()
+    price_usd = float(r.get("price", 0))
+    await update.message.reply_text(f"📢 Giá HELI hiện tại: ${price_usd:,.4f}")
 
 
 # -------------------------------
