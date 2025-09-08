@@ -1,10 +1,13 @@
 services:
   - type: web
     name: heli-bot
-    env: python
+    env: docker
     plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python heli_bot.py"
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
     envVars:
       - key: BOT_TOKEN
-        sync: false   # thiết lập trong dashboard Render, không commit token
+        sync: false   # thiết lập trong dashboard Render
+      - key: WEBHOOK_URL
+        sync: false   # thiết lập webhook (nếu có)
+
