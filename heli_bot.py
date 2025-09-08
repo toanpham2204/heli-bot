@@ -362,6 +362,13 @@ async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy thông tin validator: {e}")
 
+async def sendprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+    await send_daily_price()  # gọi lại hàm scheduler
+    await update.message.reply_text("✅ Đã gửi giá HELI ngay lập tức.")
+
 
 # -------------------------------
 # Main
@@ -387,6 +394,8 @@ def main():
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("staked", staked))
     app.add_handler(CommandHandler("validator", validator))
+    app.add_handler(CommandHandler("sendprice", sendprice))
+
 
     # Scheduler: gửi giá HELI hằng ngày
     scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
