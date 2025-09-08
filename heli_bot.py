@@ -163,17 +163,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /whoami - Hiển thị User ID của bạn
 /grant <id> - Cấp quyền cho user (admin)
 /revoke <id> - Thu hồi quyền user (admin)
+
 /staked - Xem tổng HELI đã staking
 /unstake - Xem tổng HELI đang unstake
-/unbonding_wallets - Xem số ví đang unstake
+/unbonding_wallets - Xem số ví đang unbonding
 /validator - Danh sách validator & trạng thái jail
-/status - Trạng thái mạng HeliChain
+/status - Trạng thái hệ thống
+
 /price - Giá HELI hiện tại
 /sendprice - Gửi giá HELI ngay lập tức
 /supply - Tổng cung HELI
 /apy - Tính APY staking (đã trừ commission)
 """
-    await update.message.reply_text(msg)
+    await update.message.reply_text(help_text)
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot đang hoạt động!")
