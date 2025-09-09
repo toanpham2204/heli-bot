@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
 from dateutil import parser
+from flask import Flask, request
 
 # -------------------------------
 # Cấu hình
@@ -21,6 +22,14 @@ WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
+
+flask_app = Flask(__name__)
+
+@flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put_nowait(update)
+    return "OK", 200
 
 CORE_WALLETS = {
     "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
@@ -606,4 +615,6 @@ def main():
         )
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "10000"))
+    flask_app.run(host="0.0.0.0", port=port)
     main()
