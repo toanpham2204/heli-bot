@@ -6,6 +6,7 @@ import logging
 import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from datetime import datetime, timedelta
 
 # -------------------------------
 # Cấu hình
@@ -21,6 +22,13 @@ WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
+
+CORE_TEAM = [
+    "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare",
+    "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa",
+    "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt",
+    "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde",  # ví được nhận
+]
 
 # -------------------------------
 # Quản lý User
@@ -174,6 +182,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /sendprice - Gửi giá HELI ngay lập tức
 /supply - Tổng cung HELI
 /apy - Tính APY staking (đã trừ commission)
+/coreteam - Tình trạng các ví Core Team
 """
     await update.message.reply_text(help_text)
 
@@ -374,6 +383,62 @@ async def sendprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price_usd = float(r.get("price", 0))
     await update.message.reply_text(f"📢 Giá HELI hiện tại: ${price_usd:,.4f}")
 
+def get_tx_last_7d(address):
+    url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=7)
+    page_key = None
+    total_sent = 0
+
+    while True:
+        params = {
+            "events": f"transfer.sender='{address}'",
+            "pagination.limit": 100
+        }
+        if page_key:
+            params["pagination.key"] = page_key
+
+        r = requests.get(url, params=params, timeout=20).json()
+        txs = r.get("tx_responses", [])
+
+        for tx in txs:
+            ts = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
+            if ts < start_time:
+                return total_sent  # stop sớm khi ra khỏi 7 ngày
+            for log in tx.get("logs", []):
+                for event in log.get("events", []):
+                    if event["type"] == "transfer":
+                        for attr in event["attributes"]:
+                            if attr["key"] == "amount" and attr["value"].endswith("uheli"):
+                                val = int(attr["value"].replace("uheli", ""))
+                                total_sent += val / 1_000_000
+
+        page_key = r.get("pagination", {}).get("next_key")
+        if not page_key:
+            break
+
+    return total_sent
+
+async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        msg = "👥 Theo dõi ví core team (7 ngày gần nhất):\n\n"
+        for addr in CORE_TEAM:
+            bal = get_balance(addr)
+            staked = get_staked(addr)
+            unstake = get_unstaking(addr)
+            sent7d = get_tx_last_7d(addr)
+
+            msg += (f"`{addr}`\n"
+                    f"   💰 Balance: {bal:.0f} HELI\n"
+                    f"   🔒 Staked: {staked:.0f} HELI\n"
+                    f"   🔓 Unstake: {unstake:.0f} HELI\n"
+                    f"   📤 Gửi đi (7d): {sent7d:.0f} HELI\n\n")
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    except Exception as e:
+        logging.error(f"Lỗi /coreteam: {e}")
+        await update.message.reply_text("⚠️ Không lấy được dữ liệu ví core team.")
 
 # -------------------------------
 # Main
@@ -400,6 +465,8 @@ def main():
     app.add_handler(CommandHandler("staked", staked))
     app.add_handler(CommandHandler("validator", validator))
     app.add_handler(CommandHandler("sendprice", sendprice))
+    app.add_handler(CommandHandler("coreteam", coreteam))
+
 
 
     # Scheduler: gửi giá HELI hằng ngày
