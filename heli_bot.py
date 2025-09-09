@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging, requests, json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import parser
 
 # -------------------------------
@@ -78,7 +78,8 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
-    end_time = datetime.utcnow()
+    # ✅ Chuẩn hóa UTC aware
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=7)
     page_key = None
     total_sent = 0
@@ -97,7 +98,9 @@ def get_tx_last_7d(address):
 
             for tx in txs:
                 try:
-                    ts = parser.isoparse(tx.get("timestamp", ""))
+                    ts = parser.isoparse(tx.get("timestamp", ""))  # aware
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)       # fallback
                 except Exception as e:
                     logging.warning(f"Lỗi parse timestamp: {e}")
                     continue
