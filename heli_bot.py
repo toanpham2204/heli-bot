@@ -6,7 +6,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
 from dateutil import parser
-from flask import Flask, request
 
 # -------------------------------
 # Cấu hình
@@ -22,14 +21,6 @@ WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
-
-flask_app = Flask(__name__)
-
-@flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put_nowait(update)
-    return "OK", 200
 
 CORE_WALLETS = {
     "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
@@ -558,19 +549,6 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
-async def clear(update, context):
-    chat_id = update.effective_chat.id
-    messages = await context.bot.get_chat(chat_id)
-
-    # Bot chỉ xóa được tin nhắn do bot gửi
-    for msg_id in range(update.message.message_id-50, update.message.message_id):
-        try:
-            await context.bot.delete_message(chat_id, msg_id)
-        except:
-            pass
-
-    await update.message.reply_text("✅ Bot đã xoá tin nhắn do mình gửi.\n❗Muốn xoá toàn bộ lịch sử chat → hãy dùng Delete Chat trong Telegram.")
-
 
 # -------------------------------
 # Main
@@ -600,7 +578,6 @@ def main():
     application.add_handler(CommandHandler("staked", staked))
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
-    application.add_handler(CommandHandler("clear", clear))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
@@ -615,6 +592,4 @@ def main():
         )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "10000"))
-    flask_app.run(host="0.0.0.0", port=port)
     main()
