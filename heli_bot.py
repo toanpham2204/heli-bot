@@ -592,7 +592,6 @@ def main():
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("clear", clear))
-    application.run_polling()
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
