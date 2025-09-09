@@ -207,6 +207,42 @@ def _sum_unbonding_for_validator(valoper: str) -> int:
         logging.error(f"Lỗi lấy unbonding cho {valoper}: {e}")
         return 0
 
+def get_balance(address):
+    """Lấy balance HELI của ví"""
+    try:
+        r = requests.get(f"https://lcd.helichain.com/cosmos/bank/v1beta1/balances/{address}", timeout=10).json()
+        balances = r.get("balances", [])
+        for b in balances:
+            if b.get("denom") == "uheli":
+                return int(b.get("amount", "0")) / 1_000_000
+    except Exception as e:
+        logging.error(f"Lỗi get_balance({address}): {e}")
+    return 0
+
+def get_staked(address):
+    """Lấy tổng HELI đang stake"""
+    try:
+        r = requests.get(f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegations/{address}", timeout=10).json()
+        total = 0
+        for d in r.get("delegation_responses", []):
+            total += int(d.get("balance", {}).get("amount", "0"))
+        return total / 1_000_000
+    except Exception as e:
+        logging.error(f"Lỗi get_staked({address}): {e}")
+    return 0
+
+def get_unstaking(address):
+    """Lấy tổng HELI đang unstake"""
+    try:
+        r = requests.get(f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegators/{address}/unbonding_delegations", timeout=10).json()
+        total = 0
+        for u in r.get("unbonding_responses", []):
+            for entry in u.get("entries", []):
+                total += int(entry.get("balance", "0"))
+        return total / 1_000_000
+    except Exception as e:
+        logging.error(f"Lỗi get_unstaking({address}): {e}")
+    return 0
 # -------------------------------
 # Commands
 # -------------------------------
