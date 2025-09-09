@@ -99,30 +99,34 @@ def get_tx_last_7d(address):
                 try:
                     ts = parser.isoparse(tx.get("timestamp", ""))
 
-                    # ✅ Chuẩn hóa tất cả về UTC aware
+                    # ✅ ép về UTC aware
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
-                    else:
-                        ts = ts.astimezone(timezone.utc)
+                    ts = ts.astimezone(timezone.utc)
 
                 except Exception as e:
                     logging.warning(f"Lỗi parse timestamp: {e}")
                     continue
 
+                # ✅ ép start_time và end_time cũng thành UTC aware
+                s = start_time.astimezone(timezone.utc)
+                e = end_time.astimezone(timezone.utc)
+
                 # So sánh UTC aware <-> UTC aware
-                if ts < start_time:
+                if ts < s:
                     return total_sent  # dừng khi ra khỏi 7 ngày
 
-                for log in tx.get("logs", []):
-                    for event in log.get("events", []):
-                        if event.get("type") == "transfer":
-                            for attr in event.get("attributes", []):
-                                if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
-                                    try:
-                                        val = int(attr["value"].replace("uheli", ""))
-                                        total_sent += val / 1_000_000
-                                    except Exception as e:
-                                        logging.warning(f"Lỗi parse amount: {e}")
+                if s <= ts <= e:
+                    for log in tx.get("logs", []):
+                        for event in log.get("events", []):
+                            if event.get("type") == "transfer":
+                                for attr in event.get("attributes", []):
+                                    if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
+                                        try:
+                                            val = int(attr["value"].replace("uheli", ""))
+                                            total_sent += val / 1_000_000
+                                        except Exception as e:
+                                            logging.warning(f"Lỗi parse amount: {e}")
 
             page_key = r.get("pagination", {}).get("next_key")
             if not page_key:
