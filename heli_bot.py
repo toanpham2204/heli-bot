@@ -20,14 +20,16 @@ LCD = "https://lcd.helichain.com"
 PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 
+app = Flask(__name__)
+
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
 
-CORE_TEAM = [
-    "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare",
-    "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa",
-    "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt",
-    "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde",  # ví được nhận
+CORE_WALLETS = [
+    "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
+    "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa": "Ví Core Team",
+    "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt": "Ví DAOs treasury",
+    "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde": "Ví nhận từ DAOs"
 ]
 
 # -------------------------------
@@ -534,16 +536,16 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Đang kiểm tra ví core team...")
 
     CORE_WALLETS = [
-        "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare",
-        "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa",
-        "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt",
-        "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde"
+    "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
+    "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa": "Ví Core Team",
+    "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt": "Ví DAOs treasury",
+    "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde": "Ví nhận từ DAOs"
     ]
 
     results = []
     cutoff = datetime.utcnow() - timedelta(days=7)
 
-    for address in CORE_WALLETS:
+    for address, note in CORE_WALLETS.items():
         try:
             balance = get_balance(address)
             staked = get_staked(address)
@@ -559,14 +561,10 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         params=params,
                         timeout=10
                     )
-                    r.raise_for_status()
                     data = r.json()
-                    logging.info(f"TX API response ({try_method}) for {address}: {json.dumps(data)[:500]}")
                     txs = data.get("tx_responses", [])
                     if txs:
                         break
-                except requests.exceptions.Timeout:
-                    logging.error(f"⏱ Timeout khi gọi {try_method} cho {address}")
                 except Exception as e:
                     logging.error(f"Lỗi khi gọi {try_method} cho {address}: {e}")
 
@@ -585,37 +583,36 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         val = int(attr.get("value").replace("uheli", ""))
                                         sent_7d += val
                 except Exception as e:
-                    logging.error(f"Lỗi khi phân tích TX của {address}: {e}")
+                    logging.error(f"Lỗi phân tích TX {address}: {e}")
 
             results.append(
-                f"🔹 `{address}`\n"
+                f"🔹 `{address}` ({note})\n"
                 f"   💰 Balance: {balance:,.0f} HELI\n"
                 f"   🔒 Staked: {staked:,.0f} HELI\n"
                 f"   ⏳ Unstake: {unstake:,.0f} HELI\n"
                 f"   📤 7d Sent: {sent_7d/1_000_000:,.0f} HELI"
             )
-
         except Exception as e:
-            logging.error(f"Lỗi khi xử lý ví {address}: {e}")
-            results.append(f"⚠️ Lỗi khi xử lý ví {address}")
+            results.append(f"⚠️ Lỗi khi xử lý ví {address} ({note})")
 
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    deleted = 0
     try:
-        # Lấy 50 tin nhắn gần nhất trong chat
-        async for message in context.bot.get_chat(chat_id).get_history(limit=50):
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-            except Exception as e:
-                logging.warning(f"Không xóa được message {message.message_id}: {e}")
-
-        await update.message.reply_text("🧹 Đã xóa 50 tin nhắn gần nhất.")
+        async for msg in context.bot.get_chat(chat_id).get_history(limit=50):
+            if msg.from_user and msg.from_user.is_bot:  # chỉ xóa tin nhắn bot gửi
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
+                    deleted += 1
+                except Exception as e:
+                    logging.warning(f"Không xoá được message {msg.message_id}: {e}")
+        await update.message.reply_text(f"🧹 Đã xoá {deleted} tin nhắn bot gần nhất.")
     except Exception as e:
-        logging.error(f"Lỗi khi xóa tin nhắn: {e}")
-        await update.message.reply_text("⚠️ Không thể xóa tin nhắn.")
+        logging.error(f"Lỗi khi clear: {e}")
+        await update.message.reply_text("⚠️ Không thể xoá tin nhắn.")
 
 
 # -------------------------------
@@ -645,8 +642,6 @@ def main():
     app.add_handler(CommandHandler("sendprice", sendprice))
     app.add_handler(CommandHandler("coreteam", coreteam))
     app.add_handler(CommandHandler("clear", clear))
-
-
 
     # Scheduler: gửi giá HELI hằng ngày
     scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
