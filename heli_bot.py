@@ -506,29 +506,66 @@ def get_tx_last_7d(address):
     return total_sent
 
 async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        msg = "👥 Theo dõi ví core team (7 ngày gần nhất):\n\n"
-        for addr in CORE_TEAM:
-            try:
-                bal = get_balance(addr)
-                staked = get_staked(addr)
-                unstake = get_unstaking(addr)
-                sent7d = get_tx_last_7d(addr)
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("⏳ Đang kiểm tra ví core team...")
 
-                msg += (f"`{addr}`\n"
-                        f"   💰 Balance: {bal:.0f} HELI\n"
-                        f"   🔒 Staked: {staked:.0f} HELI\n"
-                        f"   🔓 Unstake: {unstake:.0f} HELI\n"
-                        f"   📤 Gửi đi (7d): {sent7d:.0f} HELI\n\n")
-            except Exception as e:
-                logging.error(f"Lỗi khi xử lý ví {addr}: {e}")
-                msg += f"`{addr}` ⚠️ Lỗi khi lấy dữ liệu\n\n"
+    CORE_WALLETS = [
+        "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare",
+        "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa",
+        "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt",
+        "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde"
+    ]
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
+    results = []
+    for address in CORE_WALLETS:
+        try:
+            balance = get_balance(address)
+            staked = get_staked(address)
+            unstake = get_unstaking(address)
 
-    except Exception as e:
-        logging.error(f"Lỗi /coreteam: {e}")
-        await update.message.reply_text("⚠️ Không lấy được dữ liệu ví core team.")
+            # Thử lấy tx theo transfer.sender
+            params = {"events": f"transfer.sender='{address}'", "pagination.limit": 50}
+            r = requests.get("https://lcd.helichain.com/cosmos/tx/v1beta1/txs", params=params, timeout=15).json()
+            logging.info(f"TX API response (transfer.sender) for {address}: {json.dumps(r)[:500]}")
+
+            txs = r.get("tx_responses", [])
+            if not txs:
+                # Nếu rỗng, thử fallback sang message.sender
+                params = {"events": f"message.sender='{address}'", "pagination.limit": 50}
+                r = requests.get("https://lcd.helichain.com/cosmos/tx/v1beta1/txs", params=params, timeout=15).json()
+                logging.info(f"TX API response (message.sender) for {address}: {json.dumps(r)[:500]}")
+                txs = r.get("tx_responses", [])
+
+            sent_7d = 0
+            cutoff = datetime.utcnow() - timedelta(days=7)
+
+            for tx in txs:
+                tx_time = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
+                if tx_time < cutoff:
+                    continue
+                for log in tx.get("logs", []):
+                    for event in log.get("events", []):
+                        if event.get("type") in ["transfer", "coin_spent"]:
+                            for attr in event.get("attributes", []):
+                                if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
+                                    val = int(attr.get("value").replace("uheli", ""))
+                                    sent_7d += val
+
+            results.append(
+                f"🔹 `{address}`\n"
+                f"   💰 Balance: {balance:,.0f} HELI\n"
+                f"   🔒 Staked: {staked:,.0f} HELI\n"
+                f"   ⏳ Unstake: {unstake:,.0f} HELI\n"
+                f"   📤 7d Sent: {sent_7d/1_000_000:,.0f} HELI"
+            )
+
+        except Exception as e:
+            logging.error(f"Lỗi khi xử lý ví {address}: {e}")
+            results.append(f"⚠️ Lỗi khi xử lý ví {address}")
+
+    msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
+    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+
 
 # -------------------------------
 # Main
