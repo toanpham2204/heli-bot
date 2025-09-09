@@ -25,12 +25,12 @@ app = Flask(__name__)
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
 
-CORE_WALLETS = [
+CORE_WALLETS = {
     "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
     "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa": "Ví Core Team",
     "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt": "Ví DAOs treasury",
     "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde": "Ví nhận từ DAOs"
-]
+}
 
 # -------------------------------
 # Quản lý User
@@ -535,12 +535,12 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text("⏳ Đang kiểm tra ví core team...")
 
-    CORE_WALLETS = [
+    CORE_WALLETS = {
     "heli1ve27kkz6t8st902a6x4tz9fe56j6c87w92vare": "Ví Incentive Ecosystem",
     "heli1vzu8p83d2l0rswtllpqdelj4dewlty6r4kjfwa": "Ví Core Team",
     "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt": "Ví DAOs treasury",
     "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde": "Ví nhận từ DAOs"
-    ]
+    }
 
     results = []
     cutoff = datetime.utcnow() - timedelta(days=7)
