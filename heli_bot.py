@@ -549,21 +549,18 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
-async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def clear(update, context):
     chat_id = update.effective_chat.id
-    deleted = 0
-    try:
-        async for msg in context.bot.get_chat_history(chat_id, limit=50):
-            if msg.from_user and msg.from_user.is_bot:  # chỉ xóa tin nhắn bot gửi
-                try:
-                    await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
-                    deleted += 1
-                except Exception as e:
-                    logging.warning(f"Không xoá được message {msg.message_id}: {e}")
-        await update.message.reply_text(f"🧹 Đã xoá {deleted} tin nhắn bot gần nhất.")
-    except Exception as e:
-        logging.error(f"Lỗi khi clear: {e}")
-        await update.message.reply_text("⚠️ Không thể xoá tin nhắn.")
+    messages = await context.bot.get_chat(chat_id)
+
+    # Bot chỉ xóa được tin nhắn do bot gửi
+    for msg_id in range(update.message.message_id-50, update.message.message_id):
+        try:
+            await context.bot.delete_message(chat_id, msg_id)
+        except:
+            pass
+
+    await update.message.reply_text("✅ Bot đã xoá tin nhắn do mình gửi.\n❗Muốn xoá toàn bộ lịch sử chat → hãy dùng Delete Chat trong Telegram.")
 
 
 # -------------------------------
@@ -595,6 +592,7 @@ def main():
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("clear", clear))
+    app.run_polling()
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
