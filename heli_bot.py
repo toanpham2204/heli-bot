@@ -7,7 +7,7 @@ import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
-from dateutil import parse
+from dateutil import parser
 
 # -------------------------------
 # Cấu hình
