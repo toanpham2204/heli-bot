@@ -1,7 +1,6 @@
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import logging, requests, json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -286,7 +285,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /status - Trạng thái hệ thống
 
 /price - Giá HELI hiện tại
-/sendprice - Gửi giá HELI ngay lập tức
 /supply - Tổng cung HELI
 /apy - Tính APY staking (đã trừ commission)
 /coreteam - Tình trạng các ví Core Team
@@ -481,15 +479,6 @@ async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy thông tin validator: {e}")
 
-async def sendprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
-        return
-    url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
-    r = requests.get(url, timeout=10).json()
-    price_usd = float(r.get("price", 0))
-    await update.message.reply_text(f"📢 Giá HELI hiện tại: ${price_usd:,.4f}")
-
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
     end_time = datetime.utcnow()
@@ -617,7 +606,10 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Main
 # -------------------------------
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    from telegram.request import HTTPXRequest
+    request = HTTPXRequest(connect_timeout=20, read_timeout=20, write_timeout=20, pool_timeout=20)
+    application = Application.builder().token(BOT_TOKEN).request(request).build()
+
 
     # Lệnh quản lý user
     app.add_handler(CommandHandler("whoami", whoami))
@@ -637,38 +629,20 @@ def main():
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("staked", staked))
     app.add_handler(CommandHandler("validator", validator))
-    app.add_handler(CommandHandler("sendprice", sendprice))
     app.add_handler(CommandHandler("coreteam", coreteam))
     app.add_handler(CommandHandler("clear", clear))
 
-    # Scheduler: gửi giá HELI hằng ngày
-    scheduler = AsyncIOScheduler(timezone="Asia/Ho_Chi_Minh")
-
-    async def send_daily_price():
-        try:
-            r = requests.get("https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT", timeout=10).json()
-            price_usd = float(r.get("price", 0))
-            for uid in ALLOWED_USERS:
-                await app.bot.send_message(chat_id=uid, text=f"📢 Giá HELI hôm nay: ${price_usd:,.4f}")
-        except Exception as e:
-            logging.error(f"Lỗi gửi giá: {e}")
-
-    scheduler.add_job(send_daily_price, "cron", hour=9, minute=0)
-    scheduler.start()
-
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
-    # ✅ Chạy webhook nếu trên Render, còn không thì dùng polling
+    # ✅ Chạy webhook cho Render
     if os.getenv("RENDER") == "true":
-        port = int(os.environ.get("PORT", "10000"))
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
-    else:
-        app.run_polling()
+    port = int(os.environ.get("PORT", "10000"))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=BOT_TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    )
 
 if __name__ == "__main__":
     main()
