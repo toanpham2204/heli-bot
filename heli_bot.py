@@ -432,7 +432,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_usd = float(r.get("price", 0))
 
         if price_usd > 0:
-            await update.message.reply_text(f"💲 Giá HELI hiện tại (MEXC): ${price_usd:,.4f}")
+            await update.message.reply_text(f"💲 Giá HELI hiện tại (MEXC): ${price_usd:,.6f}")
             return
 
         # Fallback CoinGecko
@@ -442,7 +442,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_usd = r.get("heli", {}).get("usd")
 
         if price_usd:
-            await update.message.reply_text(f"💲 Giá HELI hiện tại (CoinGecko): ${price_usd:,.4f}")
+            await update.message.reply_text(f"💲 Giá HELI hiện tại (CoinGecko): ${price_usd:,.6f}")
         else:
             await update.message.reply_text("⚠️ Không lấy được giá HELI từ API.")
     except Exception as e:
