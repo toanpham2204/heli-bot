@@ -7,6 +7,7 @@ import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
+from dateutil import parse
 
 # -------------------------------
 # Cấu hình
@@ -77,6 +78,55 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+def get_tx_last_7d(address):
+    url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=7)
+    page_key = None
+    total_sent = 0
+
+    try:
+        while True:
+            params = {
+                "events": f"transfer.sender='{address}'",
+                "pagination.limit": 100
+            }
+            if page_key:
+                params["pagination.key"] = page_key
+
+            r = requests.get(url, params=params, timeout=20).json()
+            txs = r.get("tx_responses", [])
+
+            for tx in txs:
+                try:
+                    ts = parser.isoparse(tx.get("timestamp", ""))
+                except Exception as e:
+                    logging.warning(f"Lỗi parse timestamp: {e}")
+                    continue
+
+                if ts < start_time:
+                    return total_sent  # dừng khi ra khỏi 7 ngày
+
+                for log in tx.get("logs", []):
+                    for event in log.get("events", []):
+                        if event.get("type") == "transfer":
+                            for attr in event.get("attributes", []):
+                                if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
+                                    try:
+                                        val = int(attr["value"].replace("uheli", ""))
+                                        total_sent += val / 1_000_000
+                                    except Exception as e:
+                                        logging.warning(f"Lỗi parse amount: {e}")
+
+            page_key = r.get("pagination", {}).get("next_key")
+            if not page_key:
+                break
+
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy tx của {address}: {e}")
+
+    return total_sent
+
 def get_pool():
     try:
         url = f"{LCD}/cosmos/staking/v1beta1/pool"
@@ -423,16 +473,20 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         msg = "👥 Theo dõi ví core team (7 ngày gần nhất):\n\n"
         for addr in CORE_TEAM:
-            bal = get_balance(addr)
-            staked = get_staked(addr)
-            unstake = get_unstaking(addr)
-            sent7d = get_tx_last_7d(addr)
+            try:
+                bal = get_balance(addr)
+                staked = get_staked(addr)
+                unstake = get_unstaking(addr)
+                sent7d = get_tx_last_7d(addr)
 
-            msg += (f"`{addr}`\n"
-                    f"   💰 Balance: {bal:.0f} HELI\n"
-                    f"   🔒 Staked: {staked:.0f} HELI\n"
-                    f"   🔓 Unstake: {unstake:.0f} HELI\n"
-                    f"   📤 Gửi đi (7d): {sent7d:.0f} HELI\n\n")
+                msg += (f"`{addr}`\n"
+                        f"   💰 Balance: {bal:.0f} HELI\n"
+                        f"   🔒 Staked: {staked:.0f} HELI\n"
+                        f"   🔓 Unstake: {unstake:.0f} HELI\n"
+                        f"   📤 Gửi đi (7d): {sent7d:.0f} HELI\n\n")
+            except Exception as e:
+                logging.error(f"Lỗi khi xử lý ví {addr}: {e}")
+                msg += f"`{addr}` ⚠️ Lỗi khi lấy dữ liệu\n\n"
 
         await update.message.reply_text(msg, parse_mode="Markdown")
 
