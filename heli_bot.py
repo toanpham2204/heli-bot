@@ -479,42 +479,6 @@ async def validator(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy thông tin validator: {e}")
 
-def get_tx_last_7d(address):
-    url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
-    end_time = datetime.utcnow()
-    start_time = end_time - timedelta(days=7)
-    page_key = None
-    total_sent = 0
-
-    while True:
-        params = {
-            "events": f"transfer.sender='{address}'",
-            "pagination.limit": 100
-        }
-        if page_key:
-            params["pagination.key"] = page_key
-
-        r = requests.get(url, params=params, timeout=20).json()
-        txs = r.get("tx_responses", [])
-
-        for tx in txs:
-            ts = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
-            if ts < start_time:
-                return total_sent  # stop sớm khi ra khỏi 7 ngày
-            for log in tx.get("logs", []):
-                for event in log.get("events", []):
-                    if event["type"] == "transfer":
-                        for attr in event["attributes"]:
-                            if attr["key"] == "amount" and attr["value"].endswith("uheli"):
-                                val = int(attr["value"].replace("uheli", ""))
-                                total_sent += val / 1_000_000
-
-        page_key = r.get("pagination", {}).get("next_key")
-        if not page_key:
-            break
-
-    return total_sent
-
 async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
@@ -589,7 +553,7 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     deleted = 0
     try:
-        async for msg in context.bot.get_chat(chat_id).get_history(limit=50):
+        async for msg in context.bot.get_chat_history(chat_id, limit=50):
             if msg.from_user and msg.from_user.is_bot:  # chỉ xóa tin nhắn bot gửi
                 try:
                     await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
@@ -612,37 +576,37 @@ def main():
 
 
     # Lệnh quản lý user
-    app.add_handler(CommandHandler("whoami", whoami))
-    app.add_handler(CommandHandler("grant", grant))
-    app.add_handler(CommandHandler("revoke", revoke))
+    application.add_handler(CommandHandler("whoami", whoami))
+    application.add_handler(CommandHandler("grant", grant))
+    application.add_handler(CommandHandler("revoke", revoke))
 
     # Đăng ký command
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("unstake", unstake))
-    app.add_handler(CommandHandler("unbonding_wallets", unbonding_wallets))
-    app.add_handler(CommandHandler("bonded_ratio", bonded_ratio))
-    app.add_handler(CommandHandler("apy", apy))
-    app.add_handler(CommandHandler("supply", supply))
-    app.add_handler(CommandHandler("price", price))
-    app.add_handler(CommandHandler("staked", staked))
-    app.add_handler(CommandHandler("validator", validator))
-    app.add_handler(CommandHandler("coreteam", coreteam))
-    app.add_handler(CommandHandler("clear", clear))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("unstake", unstake))
+    application.add_handler(CommandHandler("unbonding_wallets", unbonding_wallets))
+    application.add_handler(CommandHandler("bonded_ratio", bonded_ratio))
+    application.add_handler(CommandHandler("apy", apy))
+    application.add_handler(CommandHandler("supply", supply))
+    application.add_handler(CommandHandler("price", price))
+    application.add_handler(CommandHandler("staked", staked))
+    application.add_handler(CommandHandler("validator", validator))
+    application.add_handler(CommandHandler("coreteam", coreteam))
+    application.add_handler(CommandHandler("clear", clear))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
     # ✅ Chạy webhook cho Render
     if os.getenv("RENDER") == "true":
-    port = int(os.environ.get("PORT", "10000"))
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-    )
+        port = int(os.environ.get("PORT", "10000"))
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=BOT_TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+        )
 
 if __name__ == "__main__":
     main()
