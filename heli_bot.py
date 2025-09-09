@@ -2,8 +2,7 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import logging
-import requests
+import logging, requests, json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
@@ -210,39 +209,60 @@ def _sum_unbonding_for_validator(valoper: str) -> int:
 def get_balance(address):
     """Lấy balance HELI của ví"""
     try:
-        r = requests.get(f"https://lcd.helichain.com/cosmos/bank/v1beta1/balances/{address}", timeout=10).json()
-        balances = r.get("balances", [])
+        r = requests.get(
+            f"https://lcd.helichain.com/cosmos/bank/v1beta1/balances/{address}",
+            timeout=10
+        )
+        r.raise_for_status()
+        balances = r.json().get("balances", [])
         for b in balances:
             if b.get("denom") == "uheli":
                 return int(b.get("amount", "0")) / 1_000_000
+    except requests.exceptions.Timeout:
+        logging.error(f"⏱ Timeout khi gọi get_balance({address})")
     except Exception as e:
         logging.error(f"Lỗi get_balance({address}): {e}")
     return 0
 
+
 def get_staked(address):
     """Lấy tổng HELI đang stake"""
     try:
-        r = requests.get(f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegations/{address}", timeout=10).json()
+        r = requests.get(
+            f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegations/{address}",
+            timeout=10
+        )
+        r.raise_for_status()
         total = 0
-        for d in r.get("delegation_responses", []):
+        for d in r.json().get("delegation_responses", []):
             total += int(d.get("balance", {}).get("amount", "0"))
         return total / 1_000_000
+    except requests.exceptions.Timeout:
+        logging.error(f"⏱ Timeout khi gọi get_staked({address})")
     except Exception as e:
         logging.error(f"Lỗi get_staked({address}): {e}")
     return 0
 
+
 def get_unstaking(address):
     """Lấy tổng HELI đang unstake"""
     try:
-        r = requests.get(f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegators/{address}/unbonding_delegations", timeout=10).json()
+        r = requests.get(
+            f"https://lcd.helichain.com/cosmos/staking/v1beta1/delegators/{address}/unbonding_delegations",
+            timeout=10
+        )
+        r.raise_for_status()
         total = 0
-        for u in r.get("unbonding_responses", []):
+        for u in r.json().get("unbonding_responses", []):
             for entry in u.get("entries", []):
                 total += int(entry.get("balance", "0"))
         return total / 1_000_000
+    except requests.exceptions.Timeout:
+        logging.error(f"⏱ Timeout khi gọi get_unstaking({address})")
     except Exception as e:
         logging.error(f"Lỗi get_unstaking({address}): {e}")
     return 0
+
 # -------------------------------
 # Commands
 # -------------------------------
@@ -257,6 +277,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /whoami - Hiển thị User ID của bạn
 /grant <id> - Cấp quyền cho user (admin)
 /revoke <id> - Thu hồi quyền user (admin)
+/clear - Xóa 50 tin nhắn gần đây
 
 /staked - Xem tổng HELI đã staking
 /unstake - Xem tổng HELI đang unstake
@@ -506,6 +527,9 @@ def get_tx_last_7d(address):
     return total_sent
 
 async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     chat_id = update.effective_chat.id
     await update.message.reply_text("⏳ Đang kiểm tra ví core team...")
 
@@ -517,39 +541,51 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     results = []
+    cutoff = datetime.utcnow() - timedelta(days=7)
+
     for address in CORE_WALLETS:
         try:
             balance = get_balance(address)
             staked = get_staked(address)
             unstake = get_unstaking(address)
 
-            # Thử lấy tx theo transfer.sender
-            params = {"events": f"transfer.sender='{address}'", "pagination.limit": 50}
-            r = requests.get("https://lcd.helichain.com/cosmos/tx/v1beta1/txs", params=params, timeout=15).json()
-            logging.info(f"TX API response (transfer.sender) for {address}: {json.dumps(r)[:500]}")
+            # --- Gọi API giao dịch ---
+            txs = []
+            for try_method in ["transfer.sender", "message.sender"]:
+                try:
+                    params = {"events": f"{try_method}='{address}'", "pagination.limit": 50}
+                    r = requests.get(
+                        "https://lcd.helichain.com/cosmos/tx/v1beta1/txs",
+                        params=params,
+                        timeout=10
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                    logging.info(f"TX API response ({try_method}) for {address}: {json.dumps(data)[:500]}")
+                    txs = data.get("tx_responses", [])
+                    if txs:
+                        break
+                except requests.exceptions.Timeout:
+                    logging.error(f"⏱ Timeout khi gọi {try_method} cho {address}")
+                except Exception as e:
+                    logging.error(f"Lỗi khi gọi {try_method} cho {address}: {e}")
 
-            txs = r.get("tx_responses", [])
-            if not txs:
-                # Nếu rỗng, thử fallback sang message.sender
-                params = {"events": f"message.sender='{address}'", "pagination.limit": 50}
-                r = requests.get("https://lcd.helichain.com/cosmos/tx/v1beta1/txs", params=params, timeout=15).json()
-                logging.info(f"TX API response (message.sender) for {address}: {json.dumps(r)[:500]}")
-                txs = r.get("tx_responses", [])
-
+            # --- Tính tổng gửi trong 7 ngày ---
             sent_7d = 0
-            cutoff = datetime.utcnow() - timedelta(days=7)
-
             for tx in txs:
-                tx_time = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
-                if tx_time < cutoff:
-                    continue
-                for log in tx.get("logs", []):
-                    for event in log.get("events", []):
-                        if event.get("type") in ["transfer", "coin_spent"]:
-                            for attr in event.get("attributes", []):
-                                if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
-                                    val = int(attr.get("value").replace("uheli", ""))
-                                    sent_7d += val
+                try:
+                    tx_time = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
+                    if tx_time < cutoff:
+                        continue
+                    for log in tx.get("logs", []):
+                        for event in log.get("events", []):
+                            if event.get("type") in ["transfer", "coin_spent"]:
+                                for attr in event.get("attributes", []):
+                                    if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
+                                        val = int(attr.get("value").replace("uheli", ""))
+                                        sent_7d += val
+                except Exception as e:
+                    logging.error(f"Lỗi khi phân tích TX của {address}: {e}")
 
             results.append(
                 f"🔹 `{address}`\n"
@@ -565,6 +601,21 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    try:
+        # Lấy 50 tin nhắn gần nhất trong chat
+        async for message in context.bot.get_chat(chat_id).get_history(limit=50):
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+            except Exception as e:
+                logging.warning(f"Không xóa được message {message.message_id}: {e}")
+
+        await update.message.reply_text("🧹 Đã xóa 50 tin nhắn gần nhất.")
+    except Exception as e:
+        logging.error(f"Lỗi khi xóa tin nhắn: {e}")
+        await update.message.reply_text("⚠️ Không thể xóa tin nhắn.")
 
 
 # -------------------------------
@@ -593,6 +644,7 @@ def main():
     app.add_handler(CommandHandler("validator", validator))
     app.add_handler(CommandHandler("sendprice", sendprice))
     app.add_handler(CommandHandler("coreteam", coreteam))
+    app.add_handler(CommandHandler("clear", clear))
 
 
 
