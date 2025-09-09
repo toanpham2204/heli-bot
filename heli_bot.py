@@ -78,8 +78,7 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
-    # ✅ Chuẩn hóa UTC aware
-    end_time = datetime.now(timezone.utc)
+    end_time = datetime.now(timezone.utc)             # UTC aware
     start_time = end_time - timedelta(days=7)
     page_key = None
     total_sent = 0
@@ -98,13 +97,19 @@ def get_tx_last_7d(address):
 
             for tx in txs:
                 try:
-                    ts = parser.isoparse(tx.get("timestamp", ""))  # aware
+                    ts = parser.isoparse(tx.get("timestamp", ""))
+
+                    # ✅ Chuẩn hóa tất cả về UTC aware
                     if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)       # fallback
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    else:
+                        ts = ts.astimezone(timezone.utc)
+
                 except Exception as e:
                     logging.warning(f"Lỗi parse timestamp: {e}")
                     continue
 
+                # So sánh UTC aware <-> UTC aware
                 if ts < start_time:
                     return total_sent  # dừng khi ra khỏi 7 ngày
 
