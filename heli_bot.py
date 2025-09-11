@@ -278,26 +278,17 @@ def get_unstaking(address):
 
 def get_total_supply():
     try:
-        r = requests.get("https://lcd.helichain.com/cosmos/bank/v1beta1/supply/uheli", timeout=10).json()
-        # case 1: {"amount":{"denom":"uheli","amount":"123"}}
-        if isinstance(r, dict) and "amount" in r and isinstance(r["amount"], dict):
-            return int(r["amount"].get("amount", 0))
-        # case 2: {"supply":[{"denom":"uheli","amount":"123"}]}
-        if "supply" in r:
-            for item in r["supply"]:
-                if item.get("denom") == "uheli":
-                    return int(item.get("amount", 0))
-    except:
-        pass
-    # fallback: gọi supply toàn mạng
-    try:
-        r2 = requests.get("https://lcd.helichain.com/cosmos/bank/v1beta1/supply", timeout=10).json()
-        for item in r2.get("supply", []):
-            if item.get("denom") == "uheli":
-                return int(item.get("amount", 0))
-    except:
-        pass
-    return None
+        url = f"{LCD}/cosmos/bank/v1beta1/supply"
+        r = requests.get(url, timeout=10).json()
+        heli_supply = 0
+        for item in r.get("supply", []):
+            if item["denom"] == "uheli":
+                heli_supply = int(item["amount"]) / 1e6
+                break
+        await update.message.reply_text(f"💰 Tổng cung HELI: {heli_supply:,.0f} HELI")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy supply: {e}")
+    return 0
 
 # -------------------------------
 # Commands
