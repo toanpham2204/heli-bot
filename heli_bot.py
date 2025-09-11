@@ -434,11 +434,11 @@ async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = get_pool()
     bonded = int(pool.get("bonded_tokens", 0))
     not_bonded = int(pool.get("not_bonded_tokens", 0))
-    total = bonded + not_bonded
+    supply_uheli = get_total_supply_uheli()
     if bonded == 0 or total == 0:
         await update.message.reply_text("⚠️ Không thể tính APY.")
         return
-    bonded_ratio = bonded / total
+    bonded_ratio = bonded / supply_uheli
     inflation = get_inflation()
     top_val = get_top_validator()
     if not top_val:
