@@ -344,112 +344,33 @@ async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === HÀM /unstake ===
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tổng hợp báo cáo staking health:
-    - Tổng HELI unbonding
-    - Tổng HELI bonded trong validators bị jail
-    - Crawl số liệu từ Explorer để đối chiếu
-    - Tính % so với tổng supply
-    """
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
 
-    sent = await update.message.reply_text("⏳ Đang phân tích tình trạng staking/unbonding...")
+    sent = await update.message.reply_text("⏳ Đang lấy số liệu unbonding từ Explorer...")
 
-    loop = asyncio.get_running_loop()
-
-    # === 1. Tính tổng unbonding từ toàn mạng ===
-    def compute_total_unbonding():
-        vals = _get_validators_list()
-        if not vals:
-            return None, "Không lấy được danh sách validator"
-        total = 0
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            futures = {ex.submit(_sum_unbonding_for_validator, v): v for v in vals}
-            for fut in as_completed(futures):
-                try:
-                    total += fut.result()
-                except Exception as e:
-                    logging.error(f"Lỗi khi cộng unbonding: {e}")
-        return total, None
-
-    total_uheli, err1 = await loop.run_in_executor(None, compute_total_unbonding)
-
-    # === 2. Tính bonded trong validators jail ===
-    def compute_bonded_jail():
-        base = "https://lcd.helichain.com/cosmos/staking/v1beta1"
-        total = 0
-        try:
-            r = requests.get(f"{base}/validators?pagination.limit=300", timeout=20).json()
-            jailed_vals = [v["operator_address"] for v in r.get("validators", []) if v.get("jailed")]
-            for val in jailed_vals:
-                page_key = None
-                while True:
-                    params = {"pagination.limit": 100}
-                    if page_key:
-                        params["pagination.key"] = page_key
-                    res = requests.get(f"{base}/validators/{val}/delegations", params=params, timeout=20).json()
-                    for d in res.get("delegation_responses", []):
-                        try:
-                            total += int(d.get("balance", {}).get("amount", "0"))
-                        except:
-                            pass
-                    page_key = res.get("pagination", {}).get("next_key")
-                    if not page_key:
-                        break
-        except Exception as e:
-            logging.error(f"Lỗi bonded_jail: {e}")
-            return None, str(e)
-        return total, None
-
-    total_jail, err2 = await loop.run_in_executor(None, compute_bonded_jail)
-
-    # === 3. Crawl số liệu từ Explorer ===
     explorer_unbond = None
     try:
-        html = requests.get("https://explorer.helichain.com/staking", timeout=20).text
+        url = "https://staking-explorer.com/explorer/heli"
+        html = requests.get(url, timeout=10).text
         soup = BeautifulSoup(html, "html.parser")
-        # Tìm chuỗi chứa "Unbonding" và lấy số
+
+        # Regex bắt số ngay sau chữ "Unbonding"
         match = re.search(r"Unbonding\s*([\d,\.]+)", soup.get_text())
         if match:
             explorer_unbond = float(match.group(1).replace(",", ""))
     except Exception as e:
-        logging.warning(f"Không lấy được số liệu Explorer: {e}")
+        logging.error(f"Lỗi crawl Explorer: {e}")
 
-    # === 4. Lấy tổng supply ===
-    total_supply = 0
-    try:
-        r = requests.get("https://lcd.helichain.com/cosmos/bank/v1beta1/supply/uheli", timeout=20).json()
-        total_supply = int(r.get("amount", {}).get("amount", 0)) / 1e6
-    except Exception as e:
-        logging.warning(f"Không lấy được supply: {e}")
-
-    # === Format kết quả ===
-    if err1:
-        await sent.edit_text(f"⚠️ {err1}")
-        return
-    if err2:
-        await sent.edit_text(f"⚠️ {err2}")
+    if explorer_unbond is None:
+        await sent.edit_text("⚠️ Không lấy được số liệu Unbonding từ Explorer.")
         return
 
-    heli_unbond = (total_uheli or 0) / 1e6
-    heli_jail = (total_jail or 0) / 1e6
-
-    text = (
-        f"📊 **Báo cáo Staking Health**\n\n"
-        f"🔓 Unbonding (toàn mạng): {heli_unbond:,.6f} HELI\n"
-        f"⛓️ Bonded trong validators jail: {heli_jail:,.6f} HELI\n"
+    await sent.edit_text(
+        f"📊 **Unbonding (Explorer)**\n\n🔓 {explorer_unbond:,.6f} HELI",
+        parse_mode="Markdown"
     )
-    if explorer_unbond is not None:
-        text += f"🛰️ Theo Explorer: {explorer_unbond:,.6f} HELI\n"
-
-    if total_supply > 0:
-        text += (
-            f"\n📈 Tỷ lệ unbonding: {heli_unbond/total_supply*100:.2f}%\n"
-            f"📉 Tỷ lệ HELI kẹt trong jail: {heli_jail/total_supply*100:.2f}%"
-        )
-
-    await sent.edit_text(text, parse_mode="Markdown")
 
 async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
