@@ -449,6 +449,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /supply - Tổng cung HELI
 /apy - Tính APY staking (đã trừ commission)
 /coreteam - Tình trạng các ví Core Team
+/heatmap - Chi tiết lượng unstake trong 14 ngày
 """
     await update.message.reply_text(help_text)
 
@@ -489,6 +490,27 @@ async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy danh sách unbonding: {e}")
 
+# === HÀM /heatmap ===
+async def heatmap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
+        return
+
+    sent = await update.message.reply_text("⏳ Đang phân tích heatmap unbonding...")
+    loop = asyncio.get_running_loop()
+    heatmap = await loop.run_in_executor(None, get_unbonding_heatmap)
+
+    if not heatmap:
+        await sent.edit_text("⚠️ Không lấy được dữ liệu heatmap từ LCD.")
+        return
+
+    msg = "🌡️ Heatmap giải phóng HELI (14 ngày tới):"
+    for d in range(15):
+        if heatmap.get(d, 0) > 0:
+            msg += f"\n🗓️ Ngày +{d}: {heatmap[d]:,.2f} HELI"
+
+    await sent.edit_text(msg)
+
 # === HÀM /unstake ===
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
@@ -506,11 +528,6 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"🔓 Tổng HELI đang unbonding toàn mạng: {total:,.2f} HELI\n\n🏆 Top 10 ví unbonding:"
     for addr, bal in top10:
         msg += f"\n- {addr[:12]}...: {bal:,.2f} HELI"
-
-    msg += "\n\n🌡️ Heatmap giải phóng (14 ngày tới):"
-    for d in range(15):
-        if heatmap.get(d, 0) > 0:
-            msg += f"\n🗓️ Ngày +{d}: {heatmap[d]:,.2f} HELI"
 
     await sent.edit_text(msg)
 
@@ -752,6 +769,7 @@ def main():
     application.add_handler(CommandHandler("staked", staked))
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
+    application.add_handler(CommandHandler("heatmap", heatmap))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
