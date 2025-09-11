@@ -455,17 +455,48 @@ async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
-    pool = get_pool()
-    bonded = int(pool.get("bonded_tokens", 0)) / 1e6
-    not_bonded = int(pool.get("not_bonded_tokens", 0)) / 1e6
-    total = bonded + not_bonded
-    if total == 0:
-        await update.message.reply_text("⚠️ Không có dữ liệu bonded ratio.")
+
+    try:
+        pool = get_pool()
+        bonded_uheli = int(pool.get("bonded_tokens", 0))
+    except Exception as e:
+        logging.error(f"Lỗi khi đọc pool: {e}")
+        await update.message.reply_text("⚠️ Không lấy được dữ liệu bonded.")
         return
-    ratio = bonded / total * 100
-    await update.message.reply_text(
-        f"📊 Bonded Ratio:\n🔒 {bonded:,.0f} HELI bonded\n🔓 {not_bonded:,.0f} HELI not bonded\n➡️ Tỷ lệ bonded: {ratio:.2f}%"
+
+    # --- Lấy total supply ---
+    supply_uheli = None
+    lcd_base = "https://lcd.helichain.com"
+    try:
+        r = requests.get(f"{lcd_base}/cosmos/bank/v1beta1/supply/uheli", timeout=10).json()
+        if "amount" in r and isinstance(r["amount"], dict):
+            supply_uheli = int(r["amount"].get("amount", "0"))
+        elif "supply" in r:
+            for item in r.get("supply", []):
+                if item.get("denom") == "uheli":
+                    supply_uheli = int(item.get("amount", "0"))
+                    break
+    except Exception as e:
+        logging.warning(f"Không lấy được total supply: {e}")
+
+    # --- Tính toán ---
+    bonded = bonded_uheli / 1e6
+    if not supply_uheli or supply_uheli == 0:
+        await update.message.reply_text("⚠️ Không lấy được total supply để tính tỷ lệ.")
+        return
+
+    total_supply = supply_uheli / 1e6
+    ratio = bonded / total_supply * 100
+
+    # --- Hiển thị ---
+    text = (
+        f"📊 Bonded Ratio\n\n"
+        f"🔒 HELI bonded: {bonded:,.6f}\n"
+        f"📦 Tổng cung: {total_supply:,.6f}\n"
+        f"➡️ Bonded / Supply: {ratio:.4f}%"
     )
+    await update.message.reply_text(text)
+
 
 async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
