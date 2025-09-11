@@ -81,14 +81,18 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_total_supply_uheli():
     """Trả về tổng cung HELI (uheli, int)."""
     try:
-        url = "https://lcd.helichain.com/cosmos/bank/v1beta1/supply/uheli"
-        r = requests.get(url, timeout=10)
+        url = "https://lcd.helichain.com/cosmos/bank/v1beta1/supply"
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
-        amount = r.json().get("amount", {}).get("amount")
-        return int(amount) if amount else None
+        amounts = r.json().get("supply", [])
+        for coin in amounts:
+            if coin.get("denom") == "uheli":
+                return int(coin.get("amount", 0))
+        return None
     except Exception as e:
         logging.error(f"Lỗi khi lấy supply: {e}")
         return None
+
 
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
