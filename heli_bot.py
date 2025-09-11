@@ -323,6 +323,25 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy trạng thái mạng: {e}")
 
+async def unbonding_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Đếm tổng số ví đang unbonding trên toàn bộ validators."""
+    try:
+        vals_url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+        vals = requests.get(vals_url, timeout=15).json().get("validators", [])
+        wallets = set()
+
+        for v in vals:
+            valoper = v.get("operator_address")
+            url = f"{LCD}/cosmos/staking/v1beta1/validators/{valoper}/unbonding_delegations?pagination.limit=2000"
+            r = requests.get(url, timeout=15).json()
+            for resp in r.get("unbonding_responses", []):
+                wallets.add(resp.get("delegator_address"))
+
+        count = len(wallets)
+        await update.message.reply_text(f"🔓 Tổng số ví đang unbonding: {count}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy danh sách unbonding: {e}")
+
 # === HÀM /unstake ===
 async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tổng hợp báo cáo staking health:
