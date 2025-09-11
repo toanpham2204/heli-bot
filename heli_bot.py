@@ -276,6 +276,29 @@ def get_unstaking(address):
         logging.error(f"Lỗi get_unstaking({address}): {e}")
     return 0
 
+def get_total_supply():
+    try:
+        r = requests.get("https://lcd.helichain.com/cosmos/bank/v1beta1/supply/uheli", timeout=10).json()
+        # case 1: {"amount":{"denom":"uheli","amount":"123"}}
+        if isinstance(r, dict) and "amount" in r and isinstance(r["amount"], dict):
+            return int(r["amount"].get("amount", 0))
+        # case 2: {"supply":[{"denom":"uheli","amount":"123"}]}
+        if "supply" in r:
+            for item in r["supply"]:
+                if item.get("denom") == "uheli":
+                    return int(item.get("amount", 0))
+    except:
+        pass
+    # fallback: gọi supply toàn mạng
+    try:
+        r2 = requests.get("https://lcd.helichain.com/cosmos/bank/v1beta1/supply", timeout=10).json()
+        for item in r2.get("supply", []):
+            if item.get("denom") == "uheli":
+                return int(item.get("amount", 0))
+    except:
+        pass
+    return None
+
 # -------------------------------
 # Commands
 # -------------------------------
@@ -357,7 +380,7 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
         soup = BeautifulSoup(html, "html.parser")
 
         # Regex bắt số ngay sau chữ "Unbonding"
-        match = re.search(r"Unbonding\s*([\d,\.]+)", soup.get_text())
+        match = re.search(r"Unbonding[^0-9]*([\d,\.]+)", soup.get_text(), re.IGNORECASE)
         if match:
             explorer_unbond = float(match.group(1).replace(",", ""))
     except Exception as e:
@@ -376,47 +399,22 @@ async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
+    pool = requests.get(
+        "https://lcd.helichain.com/cosmos/staking/v1beta1/pool", timeout=10
+    ).json().get("pool", {})
 
-    try:
-        pool = get_pool()
-        bonded_uheli = int(pool.get("bonded_tokens", 0))
-    except Exception as e:
-        logging.error(f"Lỗi khi đọc pool: {e}")
-        await update.message.reply_text("⚠️ Không lấy được dữ liệu bonded.")
-        return
-
-    # --- Lấy total supply ---
-    supply_uheli = None
-    lcd_base = "https://lcd.helichain.com"
-    try:
-        r = requests.get(f"{lcd_base}/cosmos/bank/v1beta1/supply/uheli", timeout=10).json()
-        if "amount" in r and isinstance(r["amount"], dict):
-            supply_uheli = int(r["amount"].get("amount", "0"))
-        elif "supply" in r:
-            for item in r.get("supply", []):
-                if item.get("denom") == "uheli":
-                    supply_uheli = int(item.get("amount", "0"))
-                    break
-    except Exception as e:
-        logging.warning(f"Không lấy được total supply: {e}")
-
-    # --- Tính toán ---
-    bonded = bonded_uheli / 1e6
-    if not supply_uheli or supply_uheli == 0:
+    bonded = int(pool.get("bonded_tokens", 0)) / 1e6
+    total_supply = get_total_supply()
+    if not total_supply:
         await update.message.reply_text("⚠️ Không lấy được total supply để tính tỷ lệ.")
         return
 
-    total_supply = supply_uheli / 1e6
-    ratio = bonded / total_supply * 100
+    supply = total_supply / 1e6
+    ratio = bonded / supply * 100
 
-    # --- Hiển thị ---
-    text = (
-        f"📊 Bonded Ratio\n\n"
-        f"🔒 HELI bonded: {bonded:,.6f}\n"
-        f"📦 Tổng cung: {total_supply:,.6f}\n"
-        f"➡️ Bonded / Supply: {ratio:.4f}%"
+    await update.message.reply_text(
+        f"📊 Bonded Ratio: {ratio:.2f}%\n🔒 {bonded:,.0f} HELI bonded\n💰 Tổng cung: {supply:,.0f} HELI"
     )
-    await update.message.reply_text(text)
 
 
 async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
