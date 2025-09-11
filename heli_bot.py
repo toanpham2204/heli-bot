@@ -78,6 +78,18 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+def get_total_supply_uheli():
+    """Trả về tổng cung HELI (uheli, int)."""
+    try:
+        url = "https://lcd.helichain.com/cosmos/bank/v1beta1/supply/uheli"
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        amount = r.json().get("amount", {}).get("amount")
+        return int(amount) if amount else None
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy supply: {e}")
+        return None
+
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
     end_time = datetime.now(timezone.utc)             # UTC aware
@@ -375,24 +387,40 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
-        return
-    pool = requests.get(
-        "https://lcd.helichain.com/cosmos/staking/v1beta1/pool", timeout=10
-    ).json().get("pool", {})
-
-    bonded = int(pool.get("bonded_tokens", 0)) / 1e6
-    total_supply = supply()
-    if not total_supply:
-        await update.message.reply_text("⚠️ Không lấy được total supply để tính tỷ lệ.")
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
 
-    supply = total_supply / 1e6
+    sent = await update.message.reply_text("⏳ Đang tính Bonded Ratio...")
+
+    loop = asyncio.get_running_loop()
+
+    def work_sync():
+        try:
+            r = requests.get("https://lcd.helichain.com/cosmos/staking/v1beta1/pool", timeout=10)
+            r.raise_for_status()
+            pool = r.json().get("pool", {})
+            bonded_uheli = int(pool.get("bonded_tokens", 0))
+        except Exception as e:
+            logging.error(f"Lỗi lấy bonded: {e}")
+            return None, None, "Không lấy được dữ liệu bonded."
+
+        supply_uheli = get_total_supply_uheli()
+        if not supply_uheli:
+            return None, None, "Không lấy được total supply."
+
+        return bonded_uheli, supply_uheli, None
+
+    bonded_uheli, supply_uheli, err = await loop.run_in_executor(None, work_sync)
+
+    if err:
+        await sent.edit_text(f"⚠️ {err}")
+        return
+
+    bonded = bonded_uheli / 1e6
+    supply = supply_uheli / 1e6
     ratio = bonded / supply * 100
 
-    await update.message.reply_text(
-        f"📊 Bonded Ratio: {ratio:.2f}%\n🔒 {bonded:,.0f} HELI bonded\n💰 Tổng cung: {supply:,.0f} HELI"
-    )
+    await sent.edit_text(f"📊 Bonded Ratio: {ratio:.4f}%")
 
 
 async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
