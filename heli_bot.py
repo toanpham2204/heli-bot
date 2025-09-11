@@ -693,46 +693,11 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             staked = get_staked(address)
             unstake = get_unstaking(address)
 
-            # --- Gọi API giao dịch ---
-            txs = []
-            for try_method in ["transfer.sender", "message.sender"]:
-                try:
-                    params = {"events": f"{try_method}='{address}'", "pagination.limit": 50}
-                    r = requests.get(
-                        "https://lcd.helichain.com/cosmos/tx/v1beta1/txs",
-                        params=params,
-                        timeout=10
-                    )
-                    data = r.json()
-                    txs = data.get("tx_responses", [])
-                    if txs:
-                        break
-                except Exception as e:
-                    logging.error(f"Lỗi khi gọi {try_method} cho {address}: {e}")
-
-            # --- Tính tổng gửi trong 7 ngày ---
-            sent_7d = 0
-            for tx in txs:
-                try:
-                    tx_time = datetime.fromisoformat(tx["timestamp"].replace("Z", "+00:00"))
-                    if tx_time < cutoff:
-                        continue
-                    for log in tx.get("logs", []):
-                        for event in log.get("events", []):
-                            if event.get("type") in ["transfer", "coin_spent"]:
-                                for attr in event.get("attributes", []):
-                                    if attr.get("key") == "amount" and attr.get("value", "").endswith("uheli"):
-                                        val = int(attr.get("value").replace("uheli", ""))
-                                        sent_7d += val
-                except Exception as e:
-                    logging.error(f"Lỗi phân tích TX {address}: {e}")
-
             results.append(
                 f"🔹 `{address}` ({note})\n"
                 f"   💰 Balance: {balance:,.0f} HELI\n"
                 f"   🔒 Staked: {staked:,.0f} HELI\n"
                 f"   ⏳ Unstake: {unstake:,.0f} HELI\n"
-                f"   📤 7d Sent: {sent_7d/1_000_000:,.0f} HELI"
             )
         except Exception as e:
             results.append(f"⚠️ Lỗi khi xử lý ví {address} ({note})")
