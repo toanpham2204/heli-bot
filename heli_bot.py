@@ -78,6 +78,46 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+def get_total_unbonding_with_top10():
+    """Tính tổng HELI unbonding và top 10 ví unbonding nhiều nhất."""
+    try:
+        base = "https://lcd.helichain.com/cosmos/staking/v1beta1"
+        vals = requests.get(f"{base}/validators?pagination.limit=200", timeout=20).json()
+        validators = vals.get("validators", [])
+        total = 0
+        wallets = {}
+
+        for val in validators:
+            valoper = val.get("operator_address")
+            if not valoper:
+                continue
+            page_key = None
+            while True:
+                url = f"{base}/validators/{valoper}/unbonding_delegations"
+                params = {"pagination.limit": 200}
+                if page_key:
+                    params["pagination.key"] = page_key
+                r = requests.get(url, params=params, timeout=20).json()
+
+                for ub in r.get("unbonding_responses", []):
+                    delegator = ub.get("delegator_address")
+                    for entry in ub.get("entries", []):
+                        bal = int(entry.get("balance", "0"))
+                        total += bal
+                        wallets[delegator] = wallets.get(delegator, 0) + bal
+
+                page_key = r.get("pagination", {}).get("next_key")
+                if not page_key:
+                    break
+
+        # Sắp xếp top 10 ví
+        top10 = sorted(wallets.items(), key=lambda x: x[1], reverse=True)[:10]
+        return total / 1e6, [(addr, bal / 1e6) for addr, bal in top10]
+
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy unbonding: {e}")
+        return None, []
+
 def get_total_supply_uheli():
     """Trả về tổng cung HELI (uheli, int)."""
     try:
@@ -188,6 +228,44 @@ def get_top_validator():
     except Exception as e:
         logging.error(f"Lỗi lấy danh sách validator: {e}")
         return None
+
+def get_total_unbonding():
+    """Tính tổng HELI đang unbonding từ tất cả delegator trên toàn mạng."""
+    try:
+        base = "https://lcd.helichain.com/cosmos/staking/v1beta1"
+        # 1. Lấy danh sách validator
+        vals = requests.get(f"{base}/validators?pagination.limit=200", timeout=20).json()
+        validators = vals.get("validators", [])
+        total = 0
+
+        for val in validators:
+            valoper = val.get("operator_address")
+            if not valoper:
+                continue
+            page_key = None
+            while True:
+                url = f"{base}/validators/{valoper}/unbonding_delegations"
+                params = {"pagination.limit": 200}
+                if page_key:
+                    params["pagination.key"] = page_key
+                r = requests.get(url, params=params, timeout=20).json()
+
+                for ub in r.get("unbonding_responses", []):
+                    for entry in ub.get("entries", []):
+                        try:
+                            total += int(entry.get("balance", "0"))
+                        except:
+                            pass
+
+                page_key = r.get("pagination", {}).get("next_key")
+                if not page_key:
+                    break
+
+        return total / 1e6
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy unbonding: {e}")
+        return None
+
 
 def get_unbonding_data():
     try:
@@ -365,29 +443,19 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
 
-    sent = await update.message.reply_text("⏳ Đang lấy số liệu unbonding từ Explorer...")
+    sent = await update.message.reply_text("⏳ Đang tính tổng HELI unbonding toàn mạng...")
+    loop = asyncio.get_running_loop()
+    total, top10 = await loop.run_in_executor(None, get_total_unbonding_with_top10)
 
-    explorer_unbond = None
-    try:
-        url = "https://staking-explorer.com/explorer/heli"
-        html = requests.get(url, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Regex bắt số ngay sau chữ "Unbonding"
-        match = re.search(r"Unbonding[^0-9]*([\d,\.]+)", soup.get_text(), re.IGNORECASE)
-        if match:
-            explorer_unbond = float(match.group(1).replace(",", ""))
-    except Exception as e:
-        logging.error(f"Lỗi crawl Explorer: {e}")
-
-    if explorer_unbond is None:
-        await sent.edit_text("⚠️ Không lấy được số liệu Unbonding từ Explorer.")
+    if total is None:
+        await sent.edit_text("⚠️ Không lấy được dữ liệu unbonding từ LCD.")
         return
 
-    await sent.edit_text(
-        f"📊 **Unbonding (Explorer)**\n\n🔓 {explorer_unbond:,.6f} HELI",
-        parse_mode="Markdown"
-    )
+    msg = f"🔓 Tổng HELI đang unbonding toàn mạng: {total:,.2f} HELI\n\n🏆 Top 10 ví unbonding:"
+    for addr, bal in top10:
+        msg += f"\n- {addr[:12]}...: {bal:,.2f} HELI"
+
+    await sent.edit_text(msg)
 
 async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
@@ -435,7 +503,7 @@ async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bonded = int(pool.get("bonded_tokens", 0))
     not_bonded = int(pool.get("not_bonded_tokens", 0))
     supply_uheli = get_total_supply_uheli()
-    if bonded == 0 or total == 0:
+    if bonded == 0 or supply_uheli == 0:
         await update.message.reply_text("⚠️ Không thể tính APY.")
         return
     bonded_ratio = bonded / supply_uheli
