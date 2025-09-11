@@ -276,19 +276,6 @@ def get_unstaking(address):
         logging.error(f"Lỗi get_unstaking({address}): {e}")
     return 0
 
-def get_total_supply():
-    try:
-        url = f"{LCD}/cosmos/bank/v1beta1/supply"
-        r = requests.get(url, timeout=10).json()
-        heli_supply = 0
-        for item in r.get("supply", []):
-            if item["denom"] == "uheli":
-                heli_supply = int(item["amount"]) / 1e6
-                break
-        await update.message.reply_text(f"💰 Tổng cung HELI: {heli_supply:,.0f} HELI")
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy supply: {e}")
-    return 0
 
 # -------------------------------
 # Commands
@@ -395,7 +382,7 @@ async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).json().get("pool", {})
 
     bonded = int(pool.get("bonded_tokens", 0)) / 1e6
-    total_supply = get_total_supply()
+    total_supply = supply()
     if not total_supply:
         await update.message.reply_text("⚠️ Không lấy được total supply để tính tỷ lệ.")
         return
