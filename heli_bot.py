@@ -78,6 +78,58 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+def get_unbonding_heatmap():
+    """Trả về heatmap HELI unbonding theo số ngày còn lại."""
+    try:
+        base = "https://lcd.helichain.com/cosmos/staking/v1beta1"
+        vals = requests.get(f"{base}/validators?pagination.limit=200", timeout=20).json()
+        validators = vals.get("validators", [])
+        heatmap = {i: 0 for i in range(15)}  # 0..14 ngày
+
+        now = datetime.now(timezone.utc)
+
+        for val in validators:
+            valoper = val.get("operator_address")
+            if not valoper:
+                continue
+            page_key = None
+            while True:
+                url = f"{base}/validators/{valoper}/unbonding_delegations"
+                params = {"pagination.limit": 200}
+                if page_key:
+                    params["pagination.key"] = page_key
+                r = requests.get(url, params=params, timeout=20).json()
+
+                for ub in r.get("unbonding_responses", []):
+                    for entry in ub.get("entries", []):
+                        bal = int(entry.get("balance", "0"))
+                        ts = entry.get("completion_time")
+                        if not ts:
+                            continue
+                        try:
+                            dt = parser.isoparse(ts)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            else:
+                                dt = dt.astimezone(timezone.utc)
+                            days_left = (dt - now).days
+                            if 0 <= days_left <= 14:
+                                heatmap[days_left] += bal
+                        except Exception as e:
+                            logging.warning(f"Lỗi parse completion_time: {e}")
+
+                page_key = r.get("pagination", {}).get("next_key")
+                if not page_key:
+                    break
+
+        # Chuyển về HELI
+        for d in heatmap:
+            heatmap[d] = heatmap[d] / 1e6
+        return heatmap
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy heatmap unbonding: {e}")
+        return {}
+
 def get_total_unbonding_with_top10():
     """Tính tổng HELI unbonding và top 10 ví unbonding nhiều nhất."""
     try:
@@ -454,6 +506,11 @@ async def unstake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"🔓 Tổng HELI đang unbonding toàn mạng: {total:,.2f} HELI\n\n🏆 Top 10 ví unbonding:"
     for addr, bal in top10:
         msg += f"\n- {addr[:12]}...: {bal:,.2f} HELI"
+
+    msg += "\n\n🌡️ Heatmap giải phóng (14 ngày tới):"
+    for d in range(15):
+        if heatmap.get(d, 0) > 0:
+            msg += f"\n🗓️ Ngày +{d}: {heatmap[d]:,.2f} HELI"
 
     await sent.edit_text(msg)
 
