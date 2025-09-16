@@ -450,6 +450,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /apy - Tính APY staking (đã trừ commission)
 /coreteam - Tình trạng các ví Core Team
 /heatmap - Chi tiết lượng unstake trong 14 ngày
+/top10balance - Top 10 ví có số dư (balance) lớn nhất
 """
     await update.message.reply_text(help_text)
 
@@ -705,6 +706,67 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
+async def top10balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hiển thị Top 10 ví có balance HELI khả dụng lớn nhất (không tính staked)."""
+    try:
+        wallets = []
+        page_key = None
+
+        while True:
+            url = f"{LCD}/cosmos/auth/v1beta1/accounts"
+            params = {"pagination.limit": 500}
+            if page_key:
+                params["pagination.key"] = page_key
+
+            r = requests.get(url, params=params, timeout=30).json()
+            accounts = r.get("accounts", [])
+
+            for acc in accounts:
+                addr = acc.get("address")
+                if not addr:
+                    continue
+
+                # 🔹 Lấy balance HELI (uheli)
+                bal_url = f"{LCD}/cosmos/bank/v1beta1/balances/{addr}"
+                try:
+                    bal = requests.get(bal_url, timeout=15).json()
+                    coins = bal.get("balances", [])
+                    amount = 0
+                    for c in coins:
+                        if c.get("denom") == "uheli":
+                            amount = int(c.get("amount", "0")) / 1e6
+                    if amount > 0:
+                        wallets.append((addr, amount))
+                except Exception as e:
+                    logging.warning(f"Lỗi lấy balance {addr}: {e}")
+
+            page_key = r.get("pagination", {}).get("next_key")
+            if not page_key:
+                break
+
+        # 🔹 Lấy top 10
+        top10 = sorted(wallets, key=lambda x: x[1], reverse=True)[:10]
+
+        if not top10:
+            await update.message.reply_text("⚠️ Không tìm thấy ví nào có balance khả dụng.")
+            return
+
+        # 🔹 Tính tổng balance của top 10
+        total_top10 = sum(bal for _, bal in top10)
+
+        # 🔹 Format kết quả (địa chỉ + số dư đầy đủ)
+        msg = "💰 Top 10 ví HELI có balance khả dụng lớn nhất:\n\n"
+        for i, (addr, bal) in enumerate(top10, start=1):
+            msg += f"{i}. {addr}\n   {bal:,.0f} HELI\n"
+
+        msg += f"\n📊 Tổng balance Top 10: {total_top10:,.0f} HELI"
+
+        await update.message.reply_text(msg)
+
+    except Exception as e:
+        logging.error(f"Lỗi khi lấy top10 balance: {e}")
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy dữ liệu: {e}")
+
 
 # -------------------------------
 # Main
@@ -735,6 +797,7 @@ def main():
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("heatmap", heatmap))
+    application.add_handler(CommandHandler("top10balance", top10balance))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
