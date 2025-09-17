@@ -20,6 +20,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 LCD = "https://lcd.helichain.com"
 PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
+EXPLORER_URL = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
@@ -708,41 +709,21 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # 1️⃣ Lấy Total Accounts từ Explorer
-        explorer_url = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
-        html = requests.get(explorer_url, timeout=20).text
-        total_accounts = None
+        async with aiohttp.ClientSession() as session:
+            async with session.get(EXPLORER_URL, timeout=20) as resp:
+                html = await resp.text()
+
         match = re.search(r"A total of\s+([\d,]+)\s+token holders found", html)
         if match:
             total_accounts = int(match.group(1).replace(",", ""))
+            msg = f"👥 Total Accounts: {total_accounts}"
+        else:
+            msg = "👥 Total Accounts: Không lấy được từ Explorer"
 
-        # 2️⃣ Lấy Active Accounts (24h) từ LCD
-        url = f"{LCD}/cosmos/tx/v1beta1/txs?pagination.limit=1000"
-        r = requests.get(url, timeout=20).json()
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(days=1)
-        active_wallets = set()
-
-        for tx in r.get("tx_responses", []):
-            ts = tx.get("timestamp")
-            if ts:
-                ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                if ts_dt >= start_time:
-                    for log in tx.get("logs", []):
-                        for ev in log.get("events", []):
-                            if ev.get("type") == "transfer":
-                                for attr in ev.get("attributes", []):
-                                    if attr.get("key") == "sender":
-                                        active_wallets.add(attr["value"])
-
-        # 3️⃣ Gửi kết quả
-        msg = "📊 **Account Stats (24h)**\n"
-        msg += f"👥 Total Accounts: {total_accounts or 'Không lấy được từ Explorer'}\n"
-        msg += f"🔥 Active Accounts (24h): {len(active_wallets)}"
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        await update.message.reply_text(msg)
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy account stats: {e}")
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy total accounts: {e}")
 
 
 # -------------------------------
