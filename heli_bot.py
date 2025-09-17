@@ -707,65 +707,55 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
 async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tổng số account và số account active 7 ngày gần nhất."""
     try:
-        # ✅ Lấy tổng số account
-        url = f"{LCD}/cosmos/auth/v1beta1/accounts?pagination.limit=1"
-        r = requests.get(url, timeout=20).json()
-        total = int(r.get("pagination", {}).get("total", 0))
+        # 1️⃣ Lấy Total Accounts từ Explorer (token holders)
+        explorer_url = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
+        html = requests.get(explorer_url, timeout=20).text
+        soup = BeautifulSoup(html, "html.parser")
+        total_accounts = None
 
-        # ✅ Tính active account trong 7 ngày
+        text = soup.get_text(" ", strip=True)
+        match = re.search(r"A total of\s+([\d,]+)\s+token holders found", text)
+        if match:
+            total_accounts = match.group(1).replace(",", "")
+
+        # 2️⃣ Đếm Active Accounts (24h) từ LCD
         end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(days=7)
-        tx_url = f"{LCD}/cosmos/tx/v1beta1/txs"
+        start_time = end_time - timedelta(days=1)
+        params = {"events": "tx.height>0", "pagination.limit": 100}
+        active_wallets = set()
         page_key = None
-        active = set()
 
         while True:
-            params = {"pagination.limit": 100}
             if page_key:
                 params["pagination.key"] = page_key
-
-            resp = requests.get(tx_url, params=params, timeout=30).json()
-            txs = resp.get("tx_responses", [])
-
-            stop_loop = False
+            r = requests.get(f"{LCD}/cosmos/tx/v1beta1/txs", params=params, timeout=20).json()
+            txs = r.get("tx_responses", [])
             for tx in txs:
-                try:
-                    ts = parser.isoparse(tx["timestamp"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    else:
-                        ts = ts.astimezone(timezone.utc)
-                except:
-                    continue
-
-                if ts < start_time:
-                    stop_loop = True
-                    break
-
+                ts = tx.get("timestamp")
+                if ts:
+                    ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    if ts_dt < start_time:
+                        break
+                # lấy sender
                 for log in tx.get("logs", []):
-                    for event in log.get("events", []):
-                        if event.get("type") == "transfer":
-                            for attr in event.get("attributes", []):
-                                if attr.get("key") in ["recipient", "sender"]:
-                                    active.add(attr.get("value"))
-
-            if stop_loop:
-                break
-
-            page_key = resp.get("pagination", {}).get("next_key")
+                    for ev in log.get("events", []):
+                        if ev.get("type") == "transfer":
+                            for attr in ev.get("attributes", []):
+                                if attr.get("key") == "sender":
+                                    active_wallets.add(attr["value"])
+            page_key = r.get("pagination", {}).get("next_key")
             if not page_key:
                 break
 
-        await update.message.reply_text(
-            f"📊 Accounts:\n"
-            f"🌐 Tổng số account: {total:,}\n"
-            f"⚡ Active 7 ngày qua: {len(active):,}"
-        )
+        # 3️⃣ Trả kết quả
+        msg = "📊 **Account Stats (24h)**\n"
+        msg += f"👥 Total Accounts: {total_accounts or 'Không lấy được từ Explorer'}\n"
+        msg += f"🔥 Active Accounts (24h): {len(active_wallets)}"
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy accounts: {e}")
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy account stats: {e}")
 
 
 # -------------------------------
