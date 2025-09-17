@@ -706,66 +706,66 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
-async def top10balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hiển thị Top 10 ví có balance HELI khả dụng lớn nhất (không tính staked)."""
+async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tổng số account và số account active 7 ngày gần nhất."""
     try:
-        wallets = []
+        # ✅ Lấy tổng số account
+        url = f"{LCD}/cosmos/auth/v1beta1/accounts?pagination.limit=1"
+        r = requests.get(url, timeout=20).json()
+        total = int(r.get("pagination", {}).get("total", 0))
+
+        # ✅ Tính active account trong 7 ngày
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=7)
+        tx_url = f"{LCD}/cosmos/tx/v1beta1/txs"
         page_key = None
+        active = set()
 
         while True:
-            url = f"{LCD}/cosmos/auth/v1beta1/accounts"
-            params = {"pagination.limit": 500}
+            params = {"pagination.limit": 100}
             if page_key:
                 params["pagination.key"] = page_key
 
-            r = requests.get(url, params=params, timeout=30).json()
-            accounts = r.get("accounts", [])
+            resp = requests.get(tx_url, params=params, timeout=30).json()
+            txs = resp.get("tx_responses", [])
 
-            for acc in accounts:
-                addr = acc.get("address")
-                if not addr:
+            stop_loop = False
+            for tx in txs:
+                try:
+                    ts = parser.isoparse(tx["timestamp"])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    else:
+                        ts = ts.astimezone(timezone.utc)
+                except:
                     continue
 
-                # 🔹 Lấy balance HELI (uheli)
-                bal_url = f"{LCD}/cosmos/bank/v1beta1/balances/{addr}"
-                try:
-                    bal = requests.get(bal_url, timeout=15).json()
-                    coins = bal.get("balances", [])
-                    amount = 0
-                    for c in coins:
-                        if c.get("denom") == "uheli":
-                            amount = int(c.get("amount", "0")) / 1e6
-                    if amount > 0:
-                        wallets.append((addr, amount))
-                except Exception as e:
-                    logging.warning(f"Lỗi lấy balance {addr}: {e}")
+                if ts < start_time:
+                    stop_loop = True
+                    break
 
-            page_key = r.get("pagination", {}).get("next_key")
+                for log in tx.get("logs", []):
+                    for event in log.get("events", []):
+                        if event.get("type") == "transfer":
+                            for attr in event.get("attributes", []):
+                                if attr.get("key") in ["recipient", "sender"]:
+                                    active.add(attr.get("value"))
+
+            if stop_loop:
+                break
+
+            page_key = resp.get("pagination", {}).get("next_key")
             if not page_key:
                 break
 
-        # 🔹 Lấy top 10
-        top10 = sorted(wallets, key=lambda x: x[1], reverse=True)[:10]
-
-        if not top10:
-            await update.message.reply_text("⚠️ Không tìm thấy ví nào có balance khả dụng.")
-            return
-
-        # 🔹 Tính tổng balance của top 10
-        total_top10 = sum(bal for _, bal in top10)
-
-        # 🔹 Format kết quả (địa chỉ + số dư đầy đủ)
-        msg = "💰 Top 10 ví HELI có balance khả dụng lớn nhất:\n\n"
-        for i, (addr, bal) in enumerate(top10, start=1):
-            msg += f"{i}. {addr}\n   {bal:,.0f} HELI\n"
-
-        msg += f"\n📊 Tổng balance Top 10: {total_top10:,.0f} HELI"
-
-        await update.message.reply_text(msg)
+        await update.message.reply_text(
+            f"📊 Accounts:\n"
+            f"🌐 Tổng số account: {total:,}\n"
+            f"⚡ Active 7 ngày qua: {len(active):,}"
+        )
 
     except Exception as e:
-        logging.error(f"Lỗi khi lấy top10 balance: {e}")
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy dữ liệu: {e}")
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy accounts: {e}")
 
 
 # -------------------------------
@@ -797,7 +797,7 @@ def main():
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("heatmap", heatmap))
-    application.add_handler(CommandHandler("top10balance", top10balance))
+    application.add_handler(CommandHandler("allaccounts", allaccounts))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
