@@ -708,47 +708,34 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # 1️⃣ Lấy Total Accounts từ Explorer (token holders)
+        # 1️⃣ Lấy Total Accounts từ Explorer
         explorer_url = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
         html = requests.get(explorer_url, timeout=20).text
-        soup = BeautifulSoup(html, "html.parser")
         total_accounts = None
-
-        text = soup.get_text(" ", strip=True)
-        match = re.search(r"A total of\s+([\d,]+)\s+token holders found", text)
+        match = re.search(r"A total of\s+([\d,]+)\s+token holders found", html)
         if match:
-            total_accounts = match.group(1).replace(",", "")
+            total_accounts = int(match.group(1).replace(",", ""))
 
-        # 2️⃣ Đếm Active Accounts (24h) từ LCD
+        # 2️⃣ Lấy Active Accounts (24h) từ LCD
+        url = f"{LCD}/cosmos/tx/v1beta1/txs?pagination.limit=1000"
+        r = requests.get(url, timeout=20).json()
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(days=1)
-        params = {"events": "tx.height>0", "pagination.limit": 100}
         active_wallets = set()
-        page_key = None
 
-        while True:
-            if page_key:
-                params["pagination.key"] = page_key
-            r = requests.get(f"{LCD}/cosmos/tx/v1beta1/txs", params=params, timeout=20).json()
-            txs = r.get("tx_responses", [])
-            for tx in txs:
-                ts = tx.get("timestamp")
-                if ts:
-                    ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    if ts_dt < start_time:
-                        break
-                # lấy sender
-                for log in tx.get("logs", []):
-                    for ev in log.get("events", []):
-                        if ev.get("type") == "transfer":
-                            for attr in ev.get("attributes", []):
-                                if attr.get("key") == "sender":
-                                    active_wallets.add(attr["value"])
-            page_key = r.get("pagination", {}).get("next_key")
-            if not page_key:
-                break
+        for tx in r.get("tx_responses", []):
+            ts = tx.get("timestamp")
+            if ts:
+                ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if ts_dt >= start_time:
+                    for log in tx.get("logs", []):
+                        for ev in log.get("events", []):
+                            if ev.get("type") == "transfer":
+                                for attr in ev.get("attributes", []):
+                                    if attr.get("key") == "sender":
+                                        active_wallets.add(attr["value"])
 
-        # 3️⃣ Trả kết quả
+        # 3️⃣ Gửi kết quả
         msg = "📊 **Account Stats (24h)**\n"
         msg += f"👥 Total Accounts: {total_accounts or 'Không lấy được từ Explorer'}\n"
         msg += f"🔥 Active Accounts (24h): {len(active_wallets)}"
