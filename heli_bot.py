@@ -1,3 +1,4 @@
+import aiohttp
 import os
 import re
 import asyncio
@@ -21,6 +22,7 @@ LCD = "https://lcd.helichain.com"
 PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 EXPLORER_URL = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
+API_URL = "https://api.mexc.com/api/v3/depth?symbol=HELIUSDT&limit=500"
 
 if not BOT_TOKEN:
     raise ValueError("⚠️ Chưa thiết lập biến môi trường BOT_TOKEN")
@@ -452,8 +454,52 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /coreteam - Tình trạng các ví Core Team
 /heatmap - Chi tiết lượng unstake trong 14 ngày
 /top10balance - Top 10 ví có số dư (balance) lớn nhất
+/orderbook - Tổng quan cung cầu MUA - BÁN
 """
     await update.message.reply_text(help_text)
+
+# Hàm lấy orderbook async
+async def get_orderbook():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(API_URL) as resp:
+            data = await resp.json()
+            asks = data.get("asks", [])
+            bids = data.get("bids", [])
+
+            total_asks = sum(float(qty) for price, qty in asks)
+            total_bids = sum(float(qty) for price, qty in bids)
+
+            return total_asks, total_bids, asks[:5], bids[:5]
+
+# Command handler cho Telegram
+async def orderbook(update, context):
+    total_asks, total_bids, top_asks, top_bids = await get_orderbook()
+
+    ratio = (total_asks / total_bids) if total_bids > 0 else float("inf")
+
+    msg = (
+        f"📊 Orderbook HELI/USDT (MEXC)\n"
+        f"🔴 Tổng lượng chờ bán (asks): {total_asks:,.2f} HELI\n"
+        f"🟢 Tổng lượng chờ mua (bids): {total_bids:,.2f} HELI\n"
+        f"📈 Tỷ lệ Bán/Mua: {ratio:.2f}x\n\n"
+    )
+
+    if ratio > 1.5:
+        msg += "⚠️ Áp lực **BÁN** đang mạnh hơn nhiều (cẩn thận xả).\n\n"
+    elif ratio < 0.7:
+        msg += "✅ Áp lực **MUA** đang chiếm ưu thế (dễ bật giá).\n\n"
+    else:
+        msg += "➖ Cân bằng cung cầu, chưa có xu hướng rõ ràng.\n\n"
+
+    msg += "Top 5 lệnh bán (asks):\n"
+    for price, qty in top_asks:
+        msg += f"🔴 Giá {price} | SL {qty}\n"
+
+    msg += "\nTop 5 lệnh mua (bids):\n"
+    for price, qty in top_bids:
+        msg += f"🟢 Giá {price} | SL {qty}\n"
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot đang hoạt động!")
@@ -756,6 +802,7 @@ def main():
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("heatmap", heatmap))
     application.add_handler(CommandHandler("allaccounts", allaccounts))
+    application.add_handler(CommandHandler("orderbook", orderbook))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
