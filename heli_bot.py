@@ -1,3 +1,4 @@
+import time
 import aiohttp
 import os
 import re
@@ -33,6 +34,9 @@ CORE_WALLETS = {
     "heli13w3en6ny39srs23gayt7wz9faayezqwqekzwmt": "Ví DAOs treasury",
     "heli196slpj6yrqxj74ftpqspuzd609rqu9wl6j6fde": "Ví nhận từ DAOs"
 }
+
+# Bộ nhớ tạm để lưu snapshot
+last_snapshot = {"asks": 0, "bids": 0, "time": 0}
 
 # -------------------------------
 # Quản lý User
@@ -455,6 +459,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /heatmap - Chi tiết lượng unstake trong 14 ngày
 /top10balance - Top 10 ví có số dư (balance) lớn nhất
 /orderbook - Tổng quan cung cầu MUA - BÁN
+/flow - Biến động M-B trong 1h
 """
     await update.message.reply_text(help_text)
 
@@ -471,8 +476,62 @@ async def get_orderbook():
 
             return total_asks, total_bids, asks[:5], bids[:5]
 
+async def get_orderbookfull():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(API_URL) as resp:
+            data = await resp.json()
+            asks = data.get("asks", [])
+            bids = data.get("bids", [])
+
+            total_asks = sum(float(qty) for price, qty in asks)
+            total_bids = sum(float(qty) for price, qty in bids)
+            return total_asks, total_bids
+
 # Command handler cho Telegram
+# Lệnh /flow
+async def flow(update, context):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+    global last_snapshot
+    total_asks, total_bids = await get_orderbookfull()
+    now = int(time.time())
+
+    msg = "📊 Dòng tiền Orderbook HELI/USDT (MEXC)\n"
+
+    if last_snapshot["time"] == 0:
+        # Lần đầu chạy
+        last_snapshot = {"asks": total_asks, "bids": total_bids, "time": now}
+        msg += "✅ Snapshot đầu tiên đã lưu. Hãy gọi lại lệnh sau để xem biến động."
+    else:
+        delta_time = (now - last_snapshot["time"]) / 60
+        asks_diff = total_asks - last_snapshot["asks"]
+        bids_diff = total_bids - last_snapshot["bids"]
+
+        msg += (
+            f"⏱ Thời gian so sánh: {delta_time:.1f} phút\n"
+            f"🔴 Asks: {last_snapshot['asks']:,.2f} → {total_asks:,.2f} "
+            f"({asks_diff:+,.2f})\n"
+            f"🟢 Bids: {last_snapshot['bids']:,.2f} → {total_bids:,.2f} "
+            f"({bids_diff:+,.2f})\n\n"
+        )
+
+        if asks_diff > bids_diff and asks_diff > 0:
+            msg += "⚠️ Lực **bán** bổ sung nhiều hơn → áp lực giá xuống.\n"
+        elif bids_diff > asks_diff and bids_diff > 0:
+            msg += "✅ Lực **mua** bổ sung nhiều hơn → có hỗ trợ tăng giá.\n"
+        else:
+            msg += "➖ Dòng tiền chưa rõ rệt, thị trường cân bằng.\n"
+
+        # Cập nhật snapshot
+        last_snapshot = {"asks": total_asks, "bids": total_bids, "time": now}
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+
 async def orderbook(update, context):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
     total_asks, total_bids, top_asks, top_bids = await get_orderbook()
 
     ratio = (total_asks / total_bids) if total_bids > 0 else float("inf")
@@ -481,15 +540,15 @@ async def orderbook(update, context):
         f"📊 Orderbook HELI/USDT (MEXC)\n"
         f"🔴 Tổng lượng chờ bán (asks): {total_asks:,.2f} HELI\n"
         f"🟢 Tổng lượng chờ mua (bids): {total_bids:,.2f} HELI\n"
-        f"📈 Tỷ lệ Bán/Mua: {ratio:.2f}x\n\n"
+        f"📈 Tỷ lệ Bán/Mua: {ratio:.4f}x\n\n"
     )
 
-    if ratio > 1.5:
-        msg += "⚠️ Áp lực **BÁN** đang mạnh hơn nhiều (cẩn thận xả).\n\n"
-    elif ratio < 0.7:
-        msg += "✅ Áp lực **MUA** đang chiếm ưu thế (dễ bật giá).\n\n"
+    if ratio > 1.2:
+        msg += "⚠️ Áp lực bán đang chiếm ưu thế.\n"
+    elif ratio < 0.8:
+        msg += "✅ Lực mua mạnh hơn, có hỗ trợ giá.\n"
     else:
-        msg += "➖ Cân bằng cung cầu, chưa có xu hướng rõ ràng.\n\n"
+        msg += "➖ Thị trường cân bằng, chưa rõ xu hướng.\n"
 
     msg += "Top 5 lệnh bán (asks):\n"
     for price, qty in top_asks:
@@ -803,6 +862,7 @@ def main():
     application.add_handler(CommandHandler("heatmap", heatmap))
     application.add_handler(CommandHandler("allaccounts", allaccounts))
     application.add_handler(CommandHandler("orderbook", orderbook))
+    application.add_handler(CommandHandler("flow", flow))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
