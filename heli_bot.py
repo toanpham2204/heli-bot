@@ -18,6 +18,9 @@ order_memory = deque(maxlen=60)  # lưu 60 lần check ≈ 1 giờ nếu check m
 THRESHOLD_COUNT = 8  # ngưỡng spam lệnh
 CHECK_INTERVAL = 60  # giây
 
+THRESHOLD_WALL = 1_000_000   # 1 triệu HELI
+MAX_PRICEDISPLAY = 10              # số mức giá hiển thị
+
 # Lưu chat_id của user khi /start
 user_chats = set()
 
@@ -1070,6 +1073,72 @@ async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy total accounts: {e}")
 
+async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+    # Lấy tham số biên độ, mặc định 0.10 (±10%)
+    try:
+        RANGE = float(context.args[0]) if context.args else 0.10
+    except ValueError:
+        RANGE = 0.10
+
+    # Lấy giá thị trường từ API
+    market_price = await price()
+    min_price = market_price * (1 - RANGE)
+    max_price = market_price * (1 + RANGE)
+
+    # Lấy orderbook
+    orderbook = await get_orderbook2()
+    bids = orderbook["bids"]
+    asks = orderbook["asks"]
+
+    if not bids or not asks:
+        await update.message.reply_text("❌ Không lấy được dữ liệu orderbook.")
+        return
+
+    # Gộp KL >= 1M HELI
+    support = defaultdict(float)
+    resistance = defaultdict(float)
+
+    for price, qty in bids:
+        if qty >= THRESHOLD_WALL and min_price <= price <= max_price:
+            support[price] += qty
+
+    for price, qty in asks:
+        if qty >= THRESHOLD_WALL and min_price <= price <= max_price:
+            resistance[price] += qty
+
+    # Tạo báo cáo
+    msg = f"📊 Hỗ trợ - Kháng cự quanh giá thị trường {market_price:.8f} (±{RANGE*100:.1f}%)\n\n"
+
+    if support:
+        msg += "🟢 Hỗ trợ mạnh:\n"
+        for price, qty in sorted(support.items(), reverse=True)[:MAX_PRICEDISPLAY]:
+            msg += f"  💰 {price:.8f} - KL {qty:,.0f}\n"
+    else:
+        msg += "🟢 Hỗ trợ: không có\n"
+
+    if resistance:
+        msg += "\n🔴 Kháng cự mạnh:\n"
+        for price, qty in sorted(resistance.items())[:MAX_PRICEDISPLAY]:
+            msg += f"  💰 {price:.8f} - KL {qty:,.0f}\n"
+    else:
+        msg += "\n🔴 Kháng cự: không có\n"
+
+    # Kết luận xu hướng
+    total_support = sum(support.values())
+    total_resistance = sum(resistance.values())
+
+    msg += "\n📈 Kết luận: "
+    if total_support > total_resistance * 1.2:
+        msg += "Xu hướng nghiêng về TĂNG (support > resistance)"
+    elif total_resistance > total_support * 1.2:
+        msg += "Xu hướng nghiêng về GIẢM (resistance > support)"
+    else:
+        msg += "Xu hướng CÂN BẰNG (sideway)"
+
+    await update.message.reply_text(msg)
 
 # -------------------------------
 # Main
@@ -1108,6 +1177,7 @@ def main():
     application.add_handler(CommandHandler("detect_doilai", detect_doilai))
     application.add_handler(CommandHandler("alert", alert_handler))
     application.add_handler(CommandHandler("trend", trend_handler))
+    application.add_handler(CommandHandler("support_resist", support_resist_handler))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
