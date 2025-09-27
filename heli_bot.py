@@ -1,8 +1,10 @@
+import json
 import time
 import aiohttp
 import os
 import re
 import asyncio
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging, requests, json
 from telegram import Update
@@ -10,6 +12,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from bs4 import BeautifulSoup
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
 # -------------------------------
 # Cấu hình
@@ -18,7 +22,12 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+# ===========================
+# 1. Lấy BOT_TOKEN từ biến môi trường
+# ===========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 LCD = "https://lcd.helichain.com"
 PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
@@ -433,8 +442,12 @@ def get_unstaking(address):
 # -------------------------------
 # Commands
 # -------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Xin chào! Bot Heli đã sẵn sàng.\nGõ /help để xem danh sách lệnh.")
+# --- Lệnh /start ---
+@dp.message(Command("start"))
+async def start_handler(message: types.Message):
+    chat_id = message.chat.id
+    save_chat_id(chat_id)
+    await message.answer(f"✅ Chat ID đã được lưu: {chat_id}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
@@ -460,8 +473,130 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /top10balance - Top 10 ví có số dư (balance) lớn nhất
 /orderbook - Tổng quan cung cầu MUA - BÁN
 /flow - Biến động M-B trong 1h
+/detect_doilai - Phát hiện ĐỘI LÁI
+/alert - Cảnh báo Spam lệnh mồi
+/trend - Đánh giá xu hướng HELI
 """
     await update.message.reply_text(help_text)
+
+# ===========================
+# 2. Dữ liệu giả lập / placeholder
+# ===========================
+async def get_orderbook2():
+    # Ở đây anh thay bằng API thực của Heli
+    return {
+        "bids": [(0.081, 1200), (0.080, 800), (0.079, 600)],  # giá, khối lượng mua
+        "asks": [(0.082, 1000), (0.083, 900), (0.084, 700)],  # giá, khối lượng bán
+    }
+
+async def get_price_data():
+    return {
+        "current": 0.083,
+        "ema5": 0.083,
+        "ema20": 0.081,
+        "avg24h": 0.079
+    }
+
+# ===========================
+# 3. Phát hiện đội lái (detect_doilai)
+# ===========================
+recent_orders = deque()
+THRESHOLD_SMALL_ORDER = 50
+THRESHOLD_SPAM_COUNT = 10
+
+@dp.message(Command("detect_doilai"))
+async def detect_doilai(message: types.Message):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
+        return
+    orderbook = await get_orderbook2()
+    small_orders = [o for o in orderbook["asks"] if o[1] < THRESHOLD_SMALL_ORDER]
+
+    if small_orders:
+        reply = "⚠️ Phát hiện lệnh mồi nhỏ:\n"
+        for price, qty in small_orders:
+            reply += f"- {qty} HELI tại {price}\n"
+    else:
+        reply = "✅ Không thấy lệnh mồi nhỏ."
+
+    await message.answer(reply)
+
+# ===========================
+# 4. Cảnh báo spam lệnh mồi (alert)
+# ===========================
+@dp.message(Command("alert"))
+async def alert_handler(message: types.Message):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
+        return
+    global recent_orders
+    now = datetime.utcnow()
+
+    recent_orders.append(now)
+    while recent_orders and recent_orders[0] < now - timedelta(minutes=1):
+        recent_orders.popleft()
+
+    if len(recent_orders) >= THRESHOLD_SPAM_COUNT:
+        await message.answer("🚨 CẢNH BÁO: Có dấu hiệu spam lệnh mồi (10+ lệnh trong 1 phút)!")
+    else:
+        await message.answer(f"📊 Trong 1 phút gần nhất: {len(recent_orders)} lệnh.")
+
+# ===========================
+# 5. Đánh giá xu hướng Heli (trend)
+# ===========================
+@dp.message(Command("trend"))
+async def trend_handler(message: types.Message):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
+        return
+    data = await get_price_data()
+    orderbook = await get_orderbook2()
+
+    # EMA
+    ema_signal = "Tăng 📈" if data["ema5"] > data["ema20"] else "Giảm 📉"
+
+    # Buy/Sell Ratio
+    buy_vol = sum([q for _, q in orderbook["bids"]])
+    sell_vol = sum([q for _, q in orderbook["asks"]])
+    ratio = buy_vol / sell_vol if sell_vol > 0 else 0
+    if ratio > 1.2:
+        ratio_signal = "Nghiêng về Mua ✅"
+    elif ratio < 0.8:
+        ratio_signal = "Nghiêng về Bán ❌"
+    else:
+        ratio_signal = "Trung tính ⚖️"
+
+    # Momentum
+    momentum = (data["current"] - data["avg24h"]) / data["avg24h"] * 100
+    if momentum > 3:
+        mom_signal = f"Tích cực (+{momentum:.2f}%) 🌟"
+    elif momentum < -3:
+        mom_signal = f"Tiêu cực ({momentum:.2f}%) ⚠️"
+    else:
+        mom_signal = f"Đi ngang ({momentum:.2f}%) ➡️"
+
+    # Kết luận
+    signals = [ema_signal, ratio_signal, mom_signal]
+    score_up = sum("Tăng" in s or "Mua" in s or "Tích cực" in s for s in signals)
+    score_down = sum("Giảm" in s or "Bán" in s or "Tiêu cực" in s for s in signals)
+
+    if score_up >= 2:
+        final = "📊 Xu hướng chung: TĂNG 🚀"
+    elif score_down >= 2:
+        final = "📊 Xu hướng chung: GIẢM 📉"
+    else:
+        final = "📊 Xu hướng chung: SIDEWAY ⚖️"
+
+    reply = f"""
+💹 Xu hướng Heli
+---------------------
+📈 EMA: {ema_signal}
+⚖️ Buy/Sell Ratio = {ratio:.2f} → {ratio_signal}
+📊 Momentum 24h: {mom_signal}
+---------------------
+{final}
+"""
+    await message.answer(reply)
 
 # Hàm lấy orderbook async
 async def get_orderbook():
@@ -863,6 +998,9 @@ def main():
     application.add_handler(CommandHandler("allaccounts", allaccounts))
     application.add_handler(CommandHandler("orderbook", orderbook))
     application.add_handler(CommandHandler("flow", flow))
+    application.add_handler(CommandHandler("detect_doilai", detect_doilai))
+    application.add_handler(CommandHandler("alert", alert_handler))
+    application.add_handler(CommandHandler("trend", trend_handler))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
