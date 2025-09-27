@@ -12,8 +12,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from bs4 import BeautifulSoup
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
 
 # -------------------------------
 # Cấu hình
@@ -26,12 +24,13 @@ logging.basicConfig(
 # 1. Lấy BOT_TOKEN từ biến môi trường
 # ===========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
 LCD = "https://lcd.helichain.com"
 PORT = int(os.getenv("PORT", 8080))  # Render cấp PORT
 WEBHOOK_URL = os.getenv("RENDER_URL")  # https://<appname>.onrender.com
 EXPLORER_URL = "https://explorer.helichain.com/Helichain/tokens/native/uheli"
+
+# ====== API Helpers ======
+BASE_URL = "https://api.mexc.com/api/v3"
 API_URL = "https://api.mexc.com/api/v3/depth?symbol=HELIUSDT&limit=500"
 
 if not BOT_TOKEN:
@@ -443,11 +442,14 @@ def get_unstaking(address):
 # Commands
 # -------------------------------
 # --- Lệnh /start ---
-@dp.message(Command("start"))
+
 async def start_handler(message: types.Message):
-    chat_id = message.chat.id
+    chat_id = update.effective_chat.id
     save_chat_id(chat_id)
-    await message.answer(f"✅ Chat ID đã được lưu: {chat_id}")
+    await message.answer(f"✅ Chat ID đã được lưu: {chat_id}. Bot đã khởi động. Sẽ gửi cảnh báo tự động.")
+    job_queue: JobQueue = context.job_queue
+    job_queue.run_repeating(job_detect_doilai, interval=300, first=10, chat_id=chat_id)
+    job_queue.run_repeating(job_trend, interval=900, first=30, chat_id=chat_id)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
@@ -483,19 +485,31 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 2. Dữ liệu giả lập / placeholder
 # ===========================
 async def get_orderbook2():
-    # Ở đây anh thay bằng API thực của Heli
-    return {
-        "bids": [(0.081, 1200), (0.080, 800), (0.079, 600)],  # giá, khối lượng mua
-        "asks": [(0.082, 1000), (0.083, 900), (0.084, 700)],  # giá, khối lượng bán
-    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{BASE_URL}/depth?symbol=HELIUSDT&limit=50") as resp:
+            data = await resp.json()
+            return {
+                "bids": [(float(p), float(q)) for p, q in data["bids"]],
+                "asks": [(float(p), float(q)) for p, q in data["asks"]]
+            }
 
 async def get_price_data():
-    return {
-        "current": 0.083,
-        "ema5": 0.083,
-        "ema20": 0.081,
-        "avg24h": 0.079
-    }
+    async with aiohttp.ClientSession() as session:
+        # Lấy giá hiện tại
+        async with session.get(f"{BASE_URL}/ticker/price?symbol=HELIUSDT") as resp:
+            price_data = await resp.json()
+            current_price = float(price_data["price"])
+
+        # Lấy dữ liệu nến để tính EMA
+        async with session.get(f"{BASE_URL}/klines?symbol=HELIUSDT&interval=5m&limit=50") as resp:
+            klines = await resp.json()
+            closes = [float(k[4]) for k in klines]  # giá đóng cửa
+
+        ema5 = sum(closes[-5:]) / 5
+        ema20 = sum(closes[-20:]) / 20
+        avg24h = sum(closes) / len(closes)
+
+        return {"current": current_price, "ema5": ema5, "ema20": ema20, "avg24h": avg24h}
 
 # ===========================
 # 3. Phát hiện đội lái (detect_doilai)
@@ -504,48 +518,50 @@ recent_orders = deque()
 THRESHOLD_SMALL_ORDER = 50
 THRESHOLD_SPAM_COUNT = 10
 
-@dp.message(Command("detect_doilai"))
-async def detect_doilai(message: types.Message):
+async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
     orderbook = await get_orderbook2()
-    small_orders = [o for o in orderbook["asks"] if o[1] < THRESHOLD_SMALL_ORDER]
+    big_orders = [o for o in orderbook["bids"] + orderbook["asks"] if o[1] > 1000]
 
-    if small_orders:
-        reply = "⚠️ Phát hiện lệnh mồi nhỏ:\n"
-        for price, qty in small_orders:
-            reply += f"- {qty} HELI tại {price}\n"
+    if big_orders:
+        msg = "🚨 Phát hiện lệnh mồi bất thường:\n"
+        for price, qty in big_orders:
+            msg += f"💰 Giá {price} - KL {qty}\n"
     else:
-        reply = "✅ Không thấy lệnh mồi nhỏ."
+        msg = "✅ Không phát hiện lệnh mồi."
 
-    await message.answer(reply)
+    await update.message.reply_text(msg)
+
+# Bộ nhớ tạm để phát hiện spam
+order_memory = []
 
 # ===========================
 # 4. Cảnh báo spam lệnh mồi (alert)
 # ===========================
-@dp.message(Command("alert"))
-async def alert_handler(message: types.Message):
+
+async def alert_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
-    global recent_orders
-    now = datetime.utcnow()
+    global order_memory
+    orderbook = await get_orderbook2()
+    now_orders = len(orderbook["bids"]) + len(orderbook["asks"])
+    order_memory.append(now_orders)
 
-    recent_orders.append(now)
-    while recent_orders and recent_orders[0] < now - timedelta(minutes=1):
-        recent_orders.popleft()
+    # Giữ log trong 1 phút
+    if len(order_memory) > 12:  # mỗi 5s check 12 lần ≈ 1 phút
+        order_memory = order_memory[-12:]
 
-    if len(recent_orders) >= THRESHOLD_SPAM_COUNT:
-        await message.answer("🚨 CẢNH BÁO: Có dấu hiệu spam lệnh mồi (10+ lệnh trong 1 phút)!")
-    else:
-        await message.answer(f"📊 Trong 1 phút gần nhất: {len(recent_orders)} lệnh.")
+    if sum(order_memory) > 500:  # ngưỡng spam (tùy chỉnh)
+        await update.message.reply_text("⚠️ Cảnh báo: Spam lệnh bất thường!")
 
 # ===========================
 # 5. Đánh giá xu hướng Heli (trend)
 # ===========================
-@dp.message(Command("trend"))
-async def trend_handler(message: types.Message):
+
+async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
@@ -596,7 +612,7 @@ async def trend_handler(message: types.Message):
 ---------------------
 {final}
 """
-    await message.answer(reply)
+    await update.message.reply_text(reply)
 
 # Hàm lấy orderbook async
 async def get_orderbook():
@@ -621,6 +637,38 @@ async def get_orderbookfull():
             total_asks = sum(float(qty) for price, qty in asks)
             total_bids = sum(float(qty) for price, qty in bids)
             return total_asks, total_bids
+
+# ====== Job Tasks ======
+async def job_detect_doilai(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    orderbook = await get_orderbook2()
+    big_orders = [o for o in orderbook["bids"] + orderbook["asks"] if o[1] > 1000]
+
+    if big_orders:
+        msg = "🚨 [Auto] Phát hiện lệnh mồi bất thường:\n"
+        for price, qty in big_orders:
+            msg += f"💰 Giá {price} - KL {qty}\n"
+        await context.bot.send_message(chat_id, msg)
+
+async def job_trend(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.chat_id
+    data = await get_price_data()
+
+    if data["ema5"] > data["ema20"] and data["current"] > data["ema5"]:
+        trend = "📈 Xu hướng: Tăng"
+    elif data["ema5"] < data["ema20"] and data["current"] < data["ema20"]:
+        trend = "📉 Xu hướng: Giảm"
+    else:
+        trend = "➖ Xu hướng: Sideway"
+
+    msg = (
+        f"{trend}\n\n"
+        f"Giá hiện tại: {data['current']}\n"
+        f"EMA5: {data['ema5']:.4f}\n"
+        f"EMA20: {data['ema20']:.4f}\n"
+        f"Trung bình 24h: {data['avg24h']:.4f}"
+    )
+    await context.bot.send_message(chat_id, msg)
 
 # Command handler cho Telegram
 # Lệnh /flow
@@ -980,8 +1028,10 @@ def main():
     application.add_handler(CommandHandler("grant", grant))
     application.add_handler(CommandHandler("revoke", revoke))
 
+
+    
     # Đăng ký command
-    application.add_handler(CommandHandler("start", start_handler))
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("ping", ping))
     application.add_handler(CommandHandler("status", status))
