@@ -516,10 +516,7 @@ async def get_price_data():
 recent_orders = deque()
 THRESHOLD_SMALL_ORDER = 10000  # Khối lượng tối đa để coi là lệnh mồi
 THRESHOLD_SPAM_COUNT = 10
-
-# Lọc lệnh mồi
-small_orders = [o for o in orderbook["bids"] + orderbook["asks"] if o[1] < THRESHOLD_SMALL_ORDER]
-MAX_DISPLAY = 10  # Số mục hiển thị tối đa
+MAX_DISPLAY = 20  # Số mục hiển thị tối đa
 
 async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
