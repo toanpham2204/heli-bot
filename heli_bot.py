@@ -4,7 +4,7 @@ import aiohttp
 import os
 import re
 import asyncio
-from collections import deque
+from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging, requests, json
 from telegram import Update
