@@ -585,7 +585,7 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orderbook = await get_orderbook2()
 
     # EMA
-    ema_signal = "Tăng 📈" if data["ema5"] > data["ema20"] else "Giảm 📉"
+    ema_signal = "Tăng 📈 EMA5 vượt EMA20" if data["ema5"] > data["ema20"] else "Giảm 📉 EMA5 dưới EMA20"
 
     # Buy/Sell Ratio
     buy_vol = sum([q for _, q in orderbook["bids"]])
