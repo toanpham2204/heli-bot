@@ -1073,6 +1073,27 @@ async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy total accounts: {e}")
 
+async def get_market_price():
+    try:
+        # Ưu tiên lấy giá từ MEXC
+        url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
+        r = requests.get(url, timeout=10).json()
+        price_usd = float(r.get("price", 0))
+
+        if price_usd > 0:
+            return price_usd
+
+        # Fallback CoinGecko
+        url_cg = "https://api.coingecko.com/api/v3/simple/price"
+        params = {"ids": "heli", "vs_currencies": "usd"}
+        r = requests.get(url_cg, params=params, timeout=10).json()
+        price_usd = r.get("heli", {}).get("usd")
+
+        return price_usd if price_usd else None
+    except Exception as e:
+        print(f"⚠️ Lỗi khi lấy giá: {e}")
+        return None
+
 async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
@@ -1084,7 +1105,10 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         RANGE = 0.10
 
     # Lấy giá thị trường từ API
-    market_price = await price()
+    market_price = await get_market_price()
+    if not market_price:
+        await update.message.reply_text("⚠️ Không lấy được giá thị trường.")
+        return
     min_price = market_price * (1 - RANGE)
     max_price = market_price * (1 + RANGE)
 
@@ -1177,7 +1201,7 @@ def main():
     application.add_handler(CommandHandler("detect_doilai", detect_doilai))
     application.add_handler(CommandHandler("alert", alert_handler))
     application.add_handler(CommandHandler("trend", trend_handler))
-    application.add_handler(CommandHandler("support_resist", support_resist_handler))
+    application.add_handler(CommandHandler("support_resist", support_resist_handlerpri))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
