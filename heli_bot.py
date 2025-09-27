@@ -1201,7 +1201,7 @@ def main():
     application.add_handler(CommandHandler("detect_doilai", detect_doilai))
     application.add_handler(CommandHandler("alert", alert_handler))
     application.add_handler(CommandHandler("trend", trend_handler))
-    application.add_handler(CommandHandler("support_resist", support_resist_handlerpri))
+    application.add_handler(CommandHandler("support_resist", support_resist_handler))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
