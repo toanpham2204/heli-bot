@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 # Khởi tạo order_memory lưu tối đa 12 lần check ≈ 1 phút
 order_memory = deque(maxlen=60)  # lưu 60 lần check ≈ 1 giờ nếu check mỗi phút
-THRESHOLD_SPAM = 8  # ngưỡng spam lệnh
+THRESHOLD_COUNT = 8  # ngưỡng spam lệnh
 CHECK_INTERVAL = 60  # giây
 
 # Lưu chat_id của user khi /start
@@ -564,14 +564,25 @@ async def alert_loop(bot):
         orderbook = await get_orderbook2()
         all_orders = orderbook["bids"] + orderbook["asks"]
 
-        # Chỉ tính lệnh mồi KL <10k
+        # Lọc lệnh mồi KL <10k
         small_orders = [o for o in all_orders if o[1] < THRESHOLD_SMALL_ORDER]
-        order_memory.append(len(small_orders))
 
-        # Nếu tổng số lệnh mồi trong 60 phút vượt ngưỡng → cảnh báo
-        if sum(order_memory) > THRESHOLD_SPAM:
+        if len(small_orders) >= THRESHOLD_COUNT:
+            # Gộp KL theo giá
+            summary = defaultdict(float)
+            for price, qty in small_orders:
+                summary[price] += qty
+
+            # Tạo message cảnh báo
+            msg = f"⚠️ Phát hiện {len(small_orders)} lệnh mồi bất thường:\n"
+            for price, total_qty in sorted(summary.items())[:MAX_DISPLAY]:
+                msg += f"💰 Giá {price} - KL {total_qty}\n"
+            if len(summary) > MAX_DISPLAY:
+                msg += f"...và {len(summary) - MAX_DISPLAY} giá khác không hiển thị"
+
+            # Gửi cảnh báo cho tất cả user
             for chat_id in user_chats:
-                await bot.send_message(chat_id=chat_id, text="⚠️ Cảnh báo: Spam lệnh mồi bất thường!")
+                await bot.send_message(chat_id=chat_id, text=msg)
 
         await asyncio.sleep(CHECK_INTERVAL)
 
@@ -587,12 +598,21 @@ async def alert_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orderbook = await get_orderbook2()
     all_orders = orderbook["bids"] + orderbook["asks"]
     small_orders = [o for o in all_orders if o[1] < THRESHOLD_SMALL_ORDER]
-    order_memory.append(len(small_orders))
 
-    if sum(order_memory) > THRESHOLD_SPAM:
-        await update.message.reply_text("⚠️ Cảnh báo: Spam lệnh mồi bất thường!")
+    if len(small_orders) >= THRESHOLD_COUNT:
+        summary = defaultdict(float)
+        for price, qty in small_orders:
+            summary[price] += qty
+
+        msg = f"⚠️ Phát hiện {len(small_orders)} lệnh mồi bất thường:\n"
+        for price, total_qty in sorted(summary.items())[:MAX_DISPLAY]:
+            msg += f"💰 Giá {price} - KL {total_qty}\n"
+        if len(summary) > MAX_DISPLAY:
+            msg += f"...và {len(summary) - MAX_DISPLAY} giá khác không hiển thị"
+
+        await update.message.reply_text(msg)
     else:
-        await update.message.reply_text("✅ Chưa phát hiện spam lệnh mồi.")
+        await update.message.reply_text("✅ Chưa phát hiện lệnh mồi.")
 
 # ===========================
 # 5. Đánh giá xu hướng Heli (trend)
