@@ -443,7 +443,7 @@ def get_unstaking(address):
 # -------------------------------
 # --- Lệnh /start ---
 
-async def start_handler(message: types.Message):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     save_chat_id(chat_id)
     await message.answer(f"✅ Chat ID đã được lưu: {chat_id}. Bot đã khởi động. Sẽ gửi cảnh báo tự động.")
