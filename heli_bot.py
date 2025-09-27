@@ -14,7 +14,12 @@ from dateutil import parser
 from bs4 import BeautifulSoup
 
 # Khởi tạo order_memory lưu tối đa 12 lần check ≈ 1 phút
-order_memory = deque(maxlen=12)
+order_memory = deque(maxlen=60)  # lưu 60 lần check ≈ 1 giờ nếu check mỗi phút
+THRESHOLD_SPAM = 500  # ngưỡng spam lệnh
+CHECK_INTERVAL = 60  # giây
+
+# Lưu chat_id của user khi /start
+user_chats = set()
 
 # -------------------------------
 # Cấu hình
@@ -448,7 +453,7 @@ def get_unstaking(address):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await update.message.reply_text("✅ Bot khởi động. Sẽ gửi cảnh báo tự động.")
+    await update.message.reply_text("✅ Bot khởi động. Sẽ gửi cảnh báo tự động. Bạn đã bắt đầu nhận cảnh báo lệnh mồi.")
     job_queue: JobQueue = context.job_queue
     job_queue.run_repeating(job_detect_doilai, interval=300, first=10, chat_id=chat_id)
     job_queue.run_repeating(job_trend, interval=900, first=30, chat_id=chat_id)
@@ -553,6 +558,23 @@ async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
+# Background task kiểm tra spam lệnh mồi
+async def alert_loop(bot):
+    while True:
+        orderbook = await get_orderbook2()
+        all_orders = orderbook["bids"] + orderbook["asks"]
+
+        # Chỉ tính lệnh mồi KL <10k
+        small_orders = [o for o in all_orders if o[1] < THRESHOLD_SMALL_ORDER]
+        order_memory.append(len(small_orders))
+
+        # Nếu tổng số lệnh mồi trong 60 phút vượt ngưỡng → cảnh báo
+        if sum(order_memory) > THRESHOLD_SPAM:
+            for chat_id in user_chats:
+                await bot.send_message(chat_id=chat_id, text="⚠️ Cảnh báo: Spam lệnh mồi bất thường!")
+
+        await asyncio.sleep(CHECK_INTERVAL)
+
 # ===========================
 # 4. Cảnh báo spam lệnh mồi (alert)
 # ===========================
@@ -561,17 +583,16 @@ async def alert_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
-    global order_memory
+
     orderbook = await get_orderbook2()
-    now_orders = len(orderbook["bids"]) + len(orderbook["asks"])
-    order_memory.append(now_orders)
+    all_orders = orderbook["bids"] + orderbook["asks"]
+    small_orders = [o for o in all_orders if o[1] < THRESHOLD_SMALL_ORDER]
+    order_memory.append(len(small_orders))
 
-    # Giữ log trong 1 phút
-    if len(order_memory) > 12:  # mỗi 5s check 12 lần ≈ 1 phút
-        order_memory = order_memory[-12:]
-
-    if sum(order_memory) > 500:  # ngưỡng spam (tùy chỉnh)
-        await update.message.reply_text("⚠️ Cảnh báo: Spam lệnh bất thường!")
+    if sum(order_memory) > THRESHOLD_SPAM:
+        await update.message.reply_text("⚠️ Cảnh báo: Spam lệnh mồi bất thường!")
+    else:
+        await update.message.reply_text("✅ Chưa phát hiện spam lệnh mồi.")
 
 # ===========================
 # 5. Đánh giá xu hướng Heli (trend)
