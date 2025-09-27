@@ -1153,6 +1153,11 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Kết luận xu hướng
     total_support = sum(support.values())
     total_resistance = sum(resistance.values())
+    
+    msg += (
+    f"\n📊 Tổng KL Hỗ trợ: {total_support:,.0f} HELI"
+    f"\n📊 Tổng KL Kháng cự: {total_resistance:,.0f} HELI\n"
+    )
 
     msg += "\n📈 Kết luận: "
     if total_support > total_resistance * 1.2:
