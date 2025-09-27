@@ -445,7 +445,6 @@ def get_unstaking(address):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    save_chat_id(chat_id)
     await message.answer(f"✅ Chat ID đã được lưu: {chat_id}. Bot đã khởi động. Sẽ gửi cảnh báo tự động.")
     job_queue: JobQueue = context.job_queue
     job_queue.run_repeating(job_detect_doilai, interval=300, first=10, chat_id=chat_id)
