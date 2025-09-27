@@ -13,6 +13,9 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from bs4 import BeautifulSoup
 
+# Khởi tạo order_memory lưu tối đa 12 lần check ≈ 1 phút
+order_memory = deque(maxlen=12)
+
 # -------------------------------
 # Cấu hình
 # -------------------------------
