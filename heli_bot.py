@@ -549,8 +549,6 @@ async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# Bộ nhớ tạm để phát hiện spam
-order_memory = []
 
 # ===========================
 # 4. Cảnh báo spam lệnh mồi (alert)
