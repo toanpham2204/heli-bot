@@ -981,7 +981,7 @@ def main():
     application.add_handler(CommandHandler("revoke", revoke))
 
     # Đăng ký command
-    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("ping", ping))
     application.add_handler(CommandHandler("status", status))
