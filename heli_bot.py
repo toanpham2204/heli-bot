@@ -516,18 +516,30 @@ async def get_price_data():
 recent_orders = deque()
 THRESHOLD_SMALL_ORDER = 50
 THRESHOLD_SPAM_COUNT = 10
+MAX_DISPLAY = 10  # Số mục hiển thị tối đa
 
 async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
     orderbook = await get_orderbook2()
+    # Lọc các lệnh "big order" > 1000
     big_orders = [o for o in orderbook["bids"] + orderbook["asks"] if o[1] > 1000]
 
     if big_orders:
-        msg = "🚨 Phát hiện lệnh mồi bất thường:\n"
+        # Gộp khối lượng theo giá
+        summary = defaultdict(float)
         for price, qty in big_orders:
-            msg += f"💰 Giá {price} - KL {qty}\n"
+            summary[price] += qty
+
+        msg = f"🚨 Phát hiện {len(big_orders)} lệnh mồi bất thường:\n"
+        for price, total_qty in sorted(summary.items())[:MAX_DISPLAY]:
+            msg += f"💰 Giá {price} - Tổng KL {total_qty}\n"
+
+        # Nếu còn nhiều lệnh khác, thông báo
+        if len(summary) > MAX_DISPLAY:
+            msg += f"...và {len(summary) - MAX_DISPLAY} giá khác không hiển thị"
+
     else:
         msg = "✅ Không phát hiện lệnh mồi."
 
