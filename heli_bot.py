@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 # Khởi tạo order_memory lưu tối đa 12 lần check ≈ 1 phút
 order_memory = deque(maxlen=60)  # lưu 60 lần check ≈ 1 giờ nếu check mỗi phút
-THRESHOLD_SPAM = 500  # ngưỡng spam lệnh
+THRESHOLD_SPAM = 8  # ngưỡng spam lệnh
 CHECK_INTERVAL = 60  # giây
 
 # Lưu chat_id của user khi /start
