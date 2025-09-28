@@ -1151,21 +1151,65 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         msg += "\n🔴 Kháng cự: không có\n"
 
     # Kết luận xu hướng
+    
+    # Tổng khối lượng
     total_support = sum(support.values())
     total_resistance = sum(resistance.values())
+
+    # Định hướng bằng mũi tên
+    direction_icon = ""
+    if total_support > total_resistance * 1.4:
+        direction_icon = "⬆️"
+    elif total_resistance > total_support * 1.4:
+        direction_icon = "⬇️"
+    else:
+        direction_icon = "↔️"
     
     msg += (
-    f"\n📊 Tổng KL Hỗ trợ: {total_support:,.0f} HELI"
-    f"\n📊 Tổng KL Kháng cự: {total_resistance:,.0f} HELI\n"
-    )
+    f"\n📊 Tổng KL Hỗ trợ: {total_support:,.0f} HELI {direction_icon}"
+    f"\n📊 Tổng KL Kháng cự: {total_resistance:,.0f} HELI {direction_icon}\n"
+)
 
-    msg += "\n📈 Kết luận: "
-    if total_support > total_resistance * 1.2:
-        msg += "Xu hướng nghiêng về TĂNG (support > resistance)"
-    elif total_resistance > total_support * 1.2:
-        msg += "Xu hướng nghiêng về GIẢM (resistance > support)"
+    # Tỷ lệ dạng 1.x - 2.x
+    if total_support > 0 and total_resistance > 0:
+        ratio_support = total_support / total_resistance
+        ratio_resist = total_resistance / total_support
+        msg += f"⚖️ Tỷ lệ Hỗ trợ/Kháng cự: {ratio_support:.2f} - {ratio_resist:.2f}\n"
+else:
+        msg += "⚖️ Tỷ lệ Hỗ trợ/Kháng cự: không đủ dữ liệu\n"
+
+    # Hỗ trợ mạnh
+    if support:
+        msg += "\n🟢 Hỗ trợ mạnh (Giá | KL):\n"
+        msg += "--------------------------\n"
+        sorted_support = sorted(support.items(), reverse=True)[:MAX_PRICEDISPLAY]
+        max_support = max(sorted_support, key=lambda x: x[1])
+        for price, qty in sorted_support:
+            marker = " 🔥" if (price, qty) == max_support else ""
+            msg += f"{price:.8f} | {qty:,.0f}{marker}\n"
     else:
-        msg += "Xu hướng CÂN BẰNG (sideway)"
+        msg += "\n🟢 Hỗ trợ: không có\n"
+
+    # Kháng cự mạnh
+    if resistance:
+        msg += "\n🔴 Kháng cự mạnh (Giá | KL):\n"
+        msg += "--------------------------\n"
+        sorted_resistance = sorted(resistance.items())[:MAX_PRICEDISPLAY]
+        max_resist = max(sorted_resistance, key=lambda x: x[1])
+        for price, qty in sorted_resistance:
+            marker = " 🔥" if (price, qty) == max_resist else ""
+            msg += f"{price:.8f} | {qty:,.0f}{marker}\n"
+    else:
+        msg += "\n🔴 Kháng cự: không có\n"
+
+    # Kết luận xu hướng
+    msg += "\n📈 Kết luận: "
+    if total_support > total_resistance * 1.4:
+        msg += "⬆️ Xu hướng TĂNG (Hỗ trợ > Kháng cự)"
+    elif total_resistance > total_support * 1.4:
+        msg += "⬇️ Xu hướng GIẢM (Kháng cự > Hỗ trợ)"
+    else:
+        msg += "↔️ Xu hướng CÂN BẰNG (sideway)"
 
     await update.message.reply_text(msg)
 
