@@ -525,7 +525,7 @@ async def get_price_data():
 # 3. Phát hiện đội lái (detect_doilai)
 # ===========================
 recent_orders = deque()
-THRESHOLD_SMALL_ORDER = 10000  # Khối lượng tối đa để coi là lệnh mồi
+THRESHOLD_SMALL_ORDER = 40000  # Khối lượng tối đa để coi là lệnh mồi
 THRESHOLD_SPAM_COUNT = 10
 MAX_DISPLAY = 20  # Số mục hiển thị tối đa
 
@@ -1175,7 +1175,7 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         ratio_support = total_support / total_resistance
         ratio_resist = total_resistance / total_support
         msg += f"⚖️ Tỷ lệ Hỗ trợ/Kháng cự: {ratio_support:.2f} - {ratio_resist:.2f}\n"
-else:
+    else:
         msg += "⚖️ Tỷ lệ Hỗ trợ/Kháng cự: không đủ dữ liệu\n"
 
     # Hỗ trợ mạnh
