@@ -104,6 +104,36 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+def format_qty(qty: float) -> str:
+    def trim(num):
+        return f"{num:.1f}".rstrip("0").rstrip(".")
+    if qty >= 1_000_000_000:
+        return f"{trim(qty/1_000_000_000)}B"
+    elif qty >= 1_000_000:
+        return f"{trim(qty/1_000_000)}M"
+    elif qty >= 1_000:
+        return f"{trim(qty/1_000)}K"
+    else:
+        return str(int(qty))
+
+def make_ascii_chart(data, label, total):
+    lines = []
+    if not data:
+        return f"{label} Không có\n"
+    max_qty = max(qty for _, qty in data)
+    for price, qty in data:
+        bar_len = int((qty / max_qty) * 10)  # max 10 ô
+        bar = "█" * bar_len
+        qty_str = format_qty(qty)
+        percent = (qty / total * 100) if total else 0
+        # Bảng: Giá | Bar | KL | %
+        lines.append(f"{label} {price:.8f} | {bar:<10} | {qty_str:<6} | {percent:>4.1f}%")
+    # Thêm dòng tổng = 100%
+    lines.append(f"{label} {'Tổng':<10} | {'-':<10} | {'-':<6} | 100.0%")
+    return "\n".join(lines)
+
+
+
 def get_unbonding_heatmap():
     """Trả về heatmap HELI unbonding theo số ngày còn lại."""
     try:
@@ -1258,15 +1288,21 @@ async def get_market_price():
         print(f"⚠️ Lỗi khi lấy giá: {e}")
         return None
 
+# Lệnh /support_resist
 async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
 
-    # Biên độ mặc định: ±20%
-    RANGE = 0.20
+    # Biên độ mặc định ±20% hoặc do user nhập
+    try:
+        RANGE = float(context.args[0]) if context.args else 0.20
+        if RANGE <= 0 or RANGE > 1:  # giới hạn hợp lý (0 < RANGE <= 1)
+            RANGE = 0.20
+    except (ValueError, IndexError):
+        RANGE = 0.20
 
-    # Lấy giá thị trường từ API
+    # Lấy giá thị trường
     market_price = await get_market_price()
     if not market_price:
         await update.message.reply_text("⚠️ Không lấy được giá thị trường.")
@@ -1278,12 +1314,11 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
     orderbook = await get_orderbook2()
     bids = orderbook["bids"]
     asks = orderbook["asks"]
-
     if not bids or not asks:
         await update.message.reply_text("❌ Không lấy được dữ liệu orderbook.")
         return
 
-    # Gộp KL >= THRESHOLD_WALL HELI và lọc trong biên độ hợp lý
+    # Gom support/resistance
     support = defaultdict(float)
     resistance = defaultdict(float)
 
@@ -1297,11 +1332,6 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # -------------------------
     # 1️⃣ Tổng quan
-    msg = (
-        f"📊 *Hỗ trợ - Kháng cự* quanh giá thị trường *{market_price:.8f}* (±20%)\n"
-        f"📉 *Biên độ giá hiển thị*: {min_price:.8f} – {max_price:.8f}\n\n"
-    )
-
     total_support = sum(support.values())
     total_resistance = sum(resistance.values())
 
@@ -1312,32 +1342,22 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
     else:
         direction_icon = "↔️"
 
-    msg += (
-        f"🟢 *Tổng Hỗ trợ*: {total_support:,.0f} HELI\n"
-        f"🔴 *Tổng Kháng cự*: {total_resistance:,.0f} HELI\n"
+    msg = (
+        f"📊 *Hỗ trợ - Kháng cự* quanh giá thị trường *{market_price:.8f}* (±{RANGE*100:.1f}%)\n"
+        f"📉 *Biên độ giá hiển thị*: {min_price:.8f} – {max_price:.8f}\n\n"
+        f"🟢 *Tổng Hỗ trợ*: {format_qty(total_support)} HELI\n"
+        f"🔴 *Tổng Kháng cự*: {format_qty(total_resistance)} HELI\n"
     )
 
     if total_support > 0 and total_resistance > 0:
         ratio_support = total_support / total_resistance
         ratio_resist = total_resistance / total_support
-        msg += f"⚖️ *Tỷ lệ Hỗ trợ/Kháng cự*: *{ratio_support:.2f}* - *{ratio_resist:.2f}* {direction_icon}\n\n"
+        msg += f"⚖️ *Tỷ lệ Hỗ trợ/Kháng cự*: {ratio_support:.2f} - {ratio_resist:.2f} {direction_icon}\n\n"
     else:
         msg += "⚖️ *Tỷ lệ Hỗ trợ/Kháng cự*: Không đủ dữ liệu\n\n"
 
     # -------------------------
-    # 2️⃣ Bảng chi tiết + ASCII Chart có % tỷ trọng
-    def make_ascii_chart(data, label, total):
-        lines = []
-        if not data:
-            return f"{label} Không có\n"
-        max_qty = max(qty for _, qty in data)
-        for price, qty in data:
-            bar_len = int((qty / max_qty) * 20)  # max 20 ô
-            bar = "█" * bar_len
-            percent = (qty / total * 100) if total else 0
-            lines.append(f"{label} *{price:.8f}* | {bar:<20} *{qty:,.0f}* ({percent:.1f}%)")
-        return "\n".join(lines)
-
+    # 2️⃣ Chi tiết
     if support:
         sorted_support = sorted(
             [(p, q) for p, q in support.items() if min_price <= p <= max_price],
@@ -1362,14 +1382,14 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         msg += "🔴 Không có kháng cự mạnh\n\n"
 
     # -------------------------
-    # 3️⃣ Nhận định xu hướng
+    # 3️⃣ Nhận định
     msg += "📈 *Nhận định*: "
     if total_support > total_resistance * 1.4:
-        msg += "⬆️ *Xu hướng TĂNG* (Hỗ trợ > Kháng cự)"
+        msg += "⬆️ Xu hướng TĂNG (Hỗ trợ > Kháng cự)"
     elif total_resistance > total_support * 1.4:
-        msg += "⬇️ *Xu hướng GIẢM* (Kháng cự > Hỗ trợ)"
+        msg += "⬇️ Xu hướng GIẢM (Kháng cự > Hỗ trợ)"
     else:
-        msg += "↔️ *Xu hướng CÂN BẰNG* (sideway)"
+        msg += "↔️ Xu hướng CÂN BẰNG (sideway)"
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
