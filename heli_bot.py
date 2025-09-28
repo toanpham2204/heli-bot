@@ -1262,11 +1262,9 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
-    # Lấy tham số biên độ, mặc định 0.10 (±10%)
-    try:
-        RANGE = float(context.args[0]) if context.args else 0.10
-    except ValueError:
-        RANGE = 0.10
+
+    # Biên độ mặc định: ±20%
+    RANGE = 0.20
 
     # Lấy giá thị trường từ API
     market_price = await get_market_price()
@@ -1285,7 +1283,7 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Không lấy được dữ liệu orderbook.")
         return
 
-    # Gộp KL >= 1M HELI
+    # Gộp KL >= THRESHOLD_WALL HELI và lọc trong biên độ hợp lý
     support = defaultdict(float)
     resistance = defaultdict(float)
 
@@ -1297,85 +1295,85 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
         if qty >= THRESHOLD_WALL and min_price <= price <= max_price:
             resistance[price] += qty
 
-    # Tạo báo cáo
-    msg = f"📊 Hỗ trợ - Kháng cự quanh giá thị trường {market_price:.8f} (±{RANGE*100:.1f}%)\n\n"
+    # -------------------------
+    # 1️⃣ Tổng quan
+    msg = (
+        f"📊 *Hỗ trợ - Kháng cự* quanh giá thị trường *{market_price:.8f}* (±20%)\n"
+        f"📉 *Biên độ giá hiển thị*: {min_price:.8f} – {max_price:.8f}\n\n"
+    )
 
-    if support:
-        msg += "🟢 Hỗ trợ mạnh:\n"
-        for price, qty in sorted(support.items(), reverse=True)[:MAX_PRICEDISPLAY]:
-            msg += f"  💰 {price:.8f} - KL {qty:,.0f}\n"
-    else:
-        msg += "🟢 Hỗ trợ: không có\n"
-
-    if resistance:
-        msg += "\n🔴 Kháng cự mạnh:\n"
-        for price, qty in sorted(resistance.items())[:MAX_PRICEDISPLAY]:
-            msg += f"  💰 {price:.8f} - KL {qty:,.0f}\n"
-    else:
-        msg += "\n🔴 Kháng cự: không có\n"
-
-    # Kết luận xu hướng
-    
-    # Tổng khối lượng
     total_support = sum(support.values())
     total_resistance = sum(resistance.values())
 
-    # Định hướng bằng mũi tên
-    direction_icon = ""
     if total_support > total_resistance * 1.4:
         direction_icon = "⬆️"
     elif total_resistance > total_support * 1.4:
         direction_icon = "⬇️"
     else:
         direction_icon = "↔️"
-    
-    msg += (
-    f"\n📊 Tổng KL Hỗ trợ: {total_support:,.0f} HELI {direction_icon}"
-    f"\n📊 Tổng KL Kháng cự: {total_resistance:,.0f} HELI {direction_icon}\n"
-)
 
-    # Tỷ lệ dạng 1.x - 2.x
+    msg += (
+        f"🟢 *Tổng Hỗ trợ*: {total_support:,.0f} HELI\n"
+        f"🔴 *Tổng Kháng cự*: {total_resistance:,.0f} HELI\n"
+    )
+
     if total_support > 0 and total_resistance > 0:
         ratio_support = total_support / total_resistance
         ratio_resist = total_resistance / total_support
-        msg += f"⚖️ Tỷ lệ Hỗ trợ/Kháng cự: {ratio_support:.2f} - {ratio_resist:.2f}\n"
+        msg += f"⚖️ *Tỷ lệ Hỗ trợ/Kháng cự*: *{ratio_support:.2f}* - *{ratio_resist:.2f}* {direction_icon}\n\n"
     else:
-        msg += "⚖️ Tỷ lệ Hỗ trợ/Kháng cự: không đủ dữ liệu\n"
+        msg += "⚖️ *Tỷ lệ Hỗ trợ/Kháng cự*: Không đủ dữ liệu\n\n"
 
-    # Hỗ trợ mạnh
+    # -------------------------
+    # 2️⃣ Bảng chi tiết + ASCII Chart có % tỷ trọng
+    def make_ascii_chart(data, label, total):
+        lines = []
+        if not data:
+            return f"{label} Không có\n"
+        max_qty = max(qty for _, qty in data)
+        for price, qty in data:
+            bar_len = int((qty / max_qty) * 20)  # max 20 ô
+            bar = "█" * bar_len
+            percent = (qty / total * 100) if total else 0
+            lines.append(f"{label} *{price:.8f}* | {bar:<20} *{qty:,.0f}* ({percent:.1f}%)")
+        return "\n".join(lines)
+
     if support:
-        msg += "\n🟢 Hỗ trợ mạnh (Giá | KL):\n"
+        sorted_support = sorted(
+            [(p, q) for p, q in support.items() if min_price <= p <= max_price],
+            reverse=True,
+            key=lambda x: x[0]
+        )[:5]
+        msg += "🟢 *Hỗ trợ mạnh (Giá | KL)*\n"
         msg += "--------------------------\n"
-        sorted_support = sorted(support.items(), reverse=True)[:MAX_PRICEDISPLAY]
-        max_support = max(sorted_support, key=lambda x: x[1])
-        for price, qty in sorted_support:
-            marker = " 🔥" if (price, qty) == max_support else ""
-            msg += f"{price:.8f} | {qty:,.0f}{marker}\n"
+        msg += make_ascii_chart(sorted_support, "🟢", total_support) + "\n\n"
     else:
-        msg += "\n🟢 Hỗ trợ: không có\n"
+        msg += "🟢 Không có hỗ trợ mạnh\n\n"
 
-    # Kháng cự mạnh
     if resistance:
-        msg += "\n🔴 Kháng cự mạnh (Giá | KL):\n"
+        sorted_resistance = sorted(
+            [(p, q) for p, q in resistance.items() if min_price <= p <= max_price],
+            key=lambda x: x[0]
+        )[:5]
+        msg += "🔴 *Kháng cự mạnh (Giá | KL)*\n"
         msg += "--------------------------\n"
-        sorted_resistance = sorted(resistance.items())[:MAX_PRICEDISPLAY]
-        max_resist = max(sorted_resistance, key=lambda x: x[1])
-        for price, qty in sorted_resistance:
-            marker = " 🔥" if (price, qty) == max_resist else ""
-            msg += f"{price:.8f} | {qty:,.0f}{marker}\n"
+        msg += make_ascii_chart(sorted_resistance, "🔴", total_resistance) + "\n\n"
     else:
-        msg += "\n🔴 Kháng cự: không có\n"
+        msg += "🔴 Không có kháng cự mạnh\n\n"
 
-    # Kết luận xu hướng
-    msg += "\n📈 Kết luận: "
+    # -------------------------
+    # 3️⃣ Nhận định xu hướng
+    msg += "📈 *Nhận định*: "
     if total_support > total_resistance * 1.4:
-        msg += "⬆️ Xu hướng TĂNG (Hỗ trợ > Kháng cự)"
+        msg += "⬆️ *Xu hướng TĂNG* (Hỗ trợ > Kháng cự)"
     elif total_resistance > total_support * 1.4:
-        msg += "⬇️ Xu hướng GIẢM (Kháng cự > Hỗ trợ)"
+        msg += "⬇️ *Xu hướng GIẢM* (Kháng cự > Hỗ trợ)"
     else:
-        msg += "↔️ Xu hướng CÂN BẰNG (sideway)"
+        msg += "↔️ *Xu hướng CÂN BẰNG* (sideway)"
 
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 
 # -------------------------------
 # Main
