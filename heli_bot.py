@@ -470,6 +470,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /grant <id> - Cấp quyền cho user (admin)
 /revoke <id> - Thu hồi quyền user (admin)
 /clear - Xóa 50 tin nhắn gần đây
+/heliinfo - Tổng quan HELI
 
 /staked - Xem tổng HELI đã staking
 /unstake - Xem tổng HELI đang unstake
@@ -490,6 +491,169 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /trend - Đánh giá xu hướng HELI
 """
     await update.message.reply_text(help_text)
+
+async def heliinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+    
+    try:
+        # --- Nhóm 1: Mạng & Validator ---
+        # Status
+        try:
+            url = f"{LCD}/cosmos/base/tendermint/v1beta1/blocks/latest"
+            r = requests.get(url, timeout=10).json()
+            height = r.get("block", {}).get("header", {}).get("height", "N/A")
+            proposer = r.get("block", {}).get("header", {}).get("proposer_address", "N/A")
+            status_txt = f"⛓ Block height: {height}\n👤 Proposer: {proposer}"
+        except:
+            status_txt = "⚠️ Không lấy được trạng thái mạng"
+        
+        # Validator
+        vals, validator_txt = [], ""
+        try:
+            url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+            r = requests.get(url, timeout=15).json()
+            vals = r.get("validators", [])
+            total = len(vals)
+            jailed = sum(1 for v in vals if v.get("jailed", False))
+            bonded = sum(1 for v in vals if v.get("status") == "BOND_STATUS_BONDED" and not v.get("jailed", False))
+            validator_txt = f"Tổng: {total} | Bonded: {bonded} | Jail: {jailed}"
+        except:
+            validator_txt = "⚠️ Không lấy được validator"
+
+        # Bonded Ratio
+        bonded_ratio_txt, bonded, supply_uheli = "", 0, 0
+        try:
+            pool = get_pool()
+            bonded = int(pool.get("bonded_tokens", 0))
+            supply_uheli = get_total_supply_uheli()
+            ratio = bonded / supply_uheli * 100 if bonded and supply_uheli else 0
+            bonded_ratio_txt = f"{ratio:.2f}%"
+        except:
+            bonded_ratio_txt = "⚠️ Không tính được"
+
+        # APY
+        apy_txt = ""
+        try:
+            inflation = get_inflation()
+            top_val = get_top_validator()
+            commission = float(top_val.get("commission", {}).get("commission_rates", {}).get("rate", 0)) if top_val else 0
+            apy_value = inflation / (bonded / supply_uheli) * (1 - commission) * 100 if bonded and supply_uheli else 0
+            apy_txt = f"{apy_value:.2f}%"
+        except:
+            apy_txt = "⚠️ Không tính được"
+
+        # Top 3 Validator
+        top3_validators_txt = ""
+        try:
+            sorted_vals = sorted(vals, key=lambda v: int(v.get("tokens", 0)), reverse=True)[:3]
+            lines = []
+            for i, v in enumerate(sorted_vals, 1):
+                moniker = v.get("description", {}).get("moniker", "N/A")
+                tokens = int(v.get("tokens", 0))
+                percent = tokens / bonded * 100 if bonded else 0
+                lines.append(f"{i}. {moniker} — {tokens/1e6:,.0f} HELI ({percent:.2f}%)")
+            top3_validators_txt = "\n".join(lines)
+        except:
+            top3_validators_txt = "⚠️ Không lấy được Top Validator"
+
+        # --- Nhóm 2: Tokenomics ---
+        supply_txt, staked_txt, unstake_txt, unbonding_wallets_txt = "", "", "", ""
+
+        # Supply
+        try:
+            supply = get_total_supply_uheli() / 1e6
+            supply_txt = f"{supply:,.0f} HELI"
+        except:
+            supply_txt = "⚠️ Không lấy được supply"
+
+        # Staked
+        try:
+            pool = get_pool()
+            staked_txt = f"{int(pool.get('bonded_tokens',0))/1e6:,.2f} HELI"
+        except:
+            staked_txt = "⚠️ Không lấy được staking"
+
+        # Unstake
+        total_unbonding = 0
+        try:
+            total_unbonding = get_total_unbonding()
+            unstake_txt = f"{total_unbonding:,.2f} HELI"
+        except:
+            unstake_txt = "⚠️ Không lấy được unstake"
+
+        # Unbonding wallets
+        try:
+            vals_url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+            vals = requests.get(vals_url, timeout=15).json().get("validators", [])
+            wallets = set()
+            for v in vals:
+                valoper = v.get("operator_address")
+                url = f"{LCD}/cosmos/staking/v1beta1/validators/{valoper}/unbonding_delegations?pagination.limit=2000"
+                r = requests.get(url, timeout=15).json()
+                for resp in r.get("unbonding_responses", []):
+                    wallets.add(resp.get("delegator_address"))
+            unbonding_wallets_txt = f"{len(wallets)} ví"
+        except:
+            unbonding_wallets_txt = "⚠️ Không lấy được"
+
+        # Top 5 Unstake
+        top5_unstake_txt = ""
+        try:
+            vals_url = f"{LCD}/cosmos/staking/v1beta1/validators?pagination.limit=2000"
+            vals = requests.get(vals_url, timeout=15).json().get("validators", [])
+            wallet_unbond = {}
+            for v in vals:
+                valoper = v.get("operator_address")
+                url = f"{LCD}/cosmos/staking/v1beta1/validators/{valoper}/unbonding_delegations?pagination.limit=2000"
+                r = requests.get(url, timeout=15).json()
+                for resp in r.get("unbonding_responses", []):
+                    delegator = resp.get("delegator_address")
+                    entries = resp.get("entries", [])
+                    total_amt = sum(int(e.get("balance", 0)) for e in entries)
+                    wallet_unbond[delegator] = wallet_unbond.get(delegator, 0) + total_amt
+
+            sorted_wallets = sorted(wallet_unbond.items(), key=lambda x: x[1], reverse=True)[:5]
+            lines = []
+            for i, (addr, amt) in enumerate(sorted_wallets, 1):
+                percent = amt / total_unbonding * 100 if total_unbonding else 0
+                lines.append(f"{i}. {addr[:8]}... — {amt/1e6:,.0f} HELI ({percent:.2f}%)")
+            top5_unstake_txt = "\n".join(lines) if lines else "Không có ví unbonding"
+        except:
+            top5_unstake_txt = "⚠️ Không lấy được Top Unstake"
+
+        # --- Nhóm 3: Thị trường ---
+        price_txt = ""
+        try:
+            url = "https://api.mexc.com/api/v3/ticker/price?symbol=HELIUSDT"
+            r = requests.get(url, timeout=10).json()
+            price_txt = f"${float(r.get('price', 0)):.6f}"
+        except:
+            price_txt = "⚠️ Không lấy được giá"
+
+        # --- Kết quả tổng hợp ---
+        msg = (
+            "📊 *HELI Overview*\n\n"
+            "🌐 *Mạng & Validator*\n"
+            f"{status_txt}\n"
+            f"🖥 Validator: {validator_txt}\n"
+            f"📈 Bonded Ratio: {bonded_ratio_txt}\n"
+            f"💰 APY: {apy_txt}\n"
+            f"🏆 Top 3 Validator:\n{top3_validators_txt}\n\n"
+            "🔗 *Tokenomics*\n"
+            f"💎 Staked: {staked_txt}\n"
+            f"🔓 Unstake: {unstake_txt}\n"
+            f"👛 Unbonding Wallets: {unbonding_wallets_txt}\n"
+            f"💰 Supply: {supply_txt}\n"
+            f"📤 Top 5 Unstake:\n{top5_unstake_txt}\n\n"
+            "💹 *Thị trường*\n"
+            f"💲 Price: {price_txt}"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Lỗi khi lấy heliinfo: {e}")
+
 
 # ===========================
 # 2. Dữ liệu giả lập / placeholder
@@ -1251,6 +1415,7 @@ def main():
     application.add_handler(CommandHandler("alert", alert_handler))
     application.add_handler(CommandHandler("trend", trend_handler))
     application.add_handler(CommandHandler("support_resist", support_resist_handler))
+    application.add_handler(CommandHandler("heliinfo", heliinfo))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
