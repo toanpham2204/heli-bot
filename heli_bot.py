@@ -991,8 +991,15 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     summaries = {}
 
     for tf in tf_map:
-        url = f"{base_url}?symbol={symbol}&interval={tf}&limit=300"
+        limit = 100
+        url = f"{base_url}?symbol={symbol}&interval={tf}&limit={limit}"
         data = requests.get(url).json()
+
+        # Fallback cho 1h nếu không có dữ liệu
+        if tf == "1h" and (not data or len(data) == 0):
+            limit = 50
+            url = f"{base_url}?symbol={symbol}&interval={tf}&limit={limit}"
+            data = requests.get(url).json()
 
         # MEXC klines trả về 8 cột
         df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q"])
@@ -1000,6 +1007,8 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df["h"] = df["h"].astype(float)
         df["l"] = df["l"].astype(float)
         df["v"] = df["v"].astype(float)
+
+        print(f"[DEBUG] {tf} - Lấy {len(df)} nến từ MEXC (limit={limit})")
 
         signals, summary = analyze_tf(df)
         results[tf] = signals
