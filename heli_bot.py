@@ -1,3 +1,5 @@
+import panda as pd
+import ta
 import json
 import time
 import aiohttp
@@ -137,6 +139,131 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+# Supertrend helper
+def supertrend(df, period=10, multiplier=3):
+    hl2 = (df['h'] + df['l']) / 2
+    atr = ta.volatility.AverageTrueRange(df['h'], df['l'], df['c'], window=period).average_true_range()
+    upperband = hl2 + (multiplier * atr)
+    lowerband = hl2 - (multiplier * atr)
+
+    final_upperband = upperband.copy()
+    final_lowerband = lowerband.copy()
+
+    for i in range(1, len(df)):
+        if df['c'].iloc[i-1] <= final_upperband.iloc[i-1]:
+            final_upperband.iloc[i] = min(upperband.iloc[i], final_upperband.iloc[i-1])
+        else:
+            final_upperband.iloc[i] = upperband.iloc[i]
+
+        if df['c'].iloc[i-1] >= final_lowerband.iloc[i-1]:
+            final_lowerband.iloc[i] = max(lowerband.iloc[i], final_lowerband.iloc[i-1])
+        else:
+            final_lowerband.iloc[i] = lowerband.iloc[i]
+
+    st = pd.Series(index=df.index)
+    for i in range(len(df)):
+        if df['c'].iloc[i] > final_upperband.iloc[i]:
+            st.iloc[i] = 1   # tăng
+        elif df['c'].iloc[i] < final_lowerband.iloc[i]:
+            st.iloc[i] = -1  # giảm
+        else:
+            st.iloc[i] = st.iloc[i-1] if i > 0 else 1
+    return st
+
+# Hàm phân tích kỹ thuật cho 1 timeframe
+def analyze_tf(df):
+    ema5 = ta.trend.EMAIndicator(df['c'], 5).ema_indicator().iloc[-1]
+    ema20 = ta.trend.EMAIndicator(df['c'], 20).ema_indicator().iloc[-1]
+    ma50 = ta.trend.SMAIndicator(df['c'], 50).sma_indicator().iloc[-1]
+    ma200 = ta.trend.SMAIndicator(df['c'], 200).sma_indicator().iloc[-1]
+
+    macd = ta.trend.MACD(df['c'])
+    macd_val = macd.macd().iloc[-1]
+    macd_sig = macd.macd_signal().iloc[-1]
+
+    rsi = ta.momentum.RSIIndicator(df['c'], 14).rsi().iloc[-1]
+
+    sar = ta.trend.PSARIndicator(df['h'], df['l'], df['c']).psar().iloc[-1]
+    close = df['c'].iloc[-1]
+
+    vol = df['v'].iloc[-1]
+    vol_avg = df['v'].rolling(20).mean().iloc[-1]
+
+    st = supertrend(df).iloc[-1]
+
+    signals = []
+    score_up = score_down = 0
+
+    # EMA
+    if ema5 > ema20:
+        signals.append("📈 EMA: Tăng (EMA5 > EMA20)")
+        score_up += 1
+    else:
+        signals.append("📉 EMA: Giảm (EMA5 < EMA20)")
+        score_down += 1
+
+    # MA
+    if ma50 > ma200:
+        signals.append("📈 MA: Tăng (MA50 > MA200)")
+        score_up += 1
+    else:
+        signals.append("📉 MA: Giảm (MA50 < MA200)")
+        score_down += 1
+
+    # MACD
+    if macd_val > macd_sig:
+        signals.append("📈 MACD: Tăng")
+        score_up += 1
+    else:
+        signals.append("📉 MACD: Giảm")
+        score_down += 1
+
+    # RSI
+    if rsi > 70:
+        signals.append(f"⚠️ RSI {rsi:.1f} → Quá mua")
+        score_down += 1
+    elif rsi < 30:
+        signals.append(f"⚠️ RSI {rsi:.1f} → Quá bán")
+        score_up += 1
+    else:
+        signals.append(f"⚖️ RSI {rsi:.1f} → Trung tính")
+
+    # SAR
+    if close > sar:
+        signals.append("🔵 SAR: Hỗ trợ (tín hiệu Tăng)")
+        score_up += 1
+    else:
+        signals.append("🔴 SAR: Kháng cự (tín hiệu Giảm)")
+        score_down += 1
+
+    # Volume
+    if vol > vol_avg * 1.2:
+        signals.append("📊 Volume: Tăng mạnh")
+        score_up += 1
+    elif vol < vol_avg * 0.8:
+        signals.append("📊 Volume: Giảm")
+        score_down += 1
+    else:
+        signals.append("📊 Volume: Trung bình")
+
+    # Supertrend
+    if st == 1:
+        signals.append("🟢 Supertrend: MUA")
+        score_up += 1
+    else:
+        signals.append("🔴 Supertrend: BÁN")
+        score_down += 1
+
+    # Nhận định
+    if score_up >= score_down * 1.5:
+        summary = "⬆️ Xu hướng TĂNG"
+    elif score_down >= score_up * 1.5:
+        summary = "⬇️ Xu hướng GIẢM"
+    else:
+        summary = "↔️ Xu hướng SIDEWAY"
+
+    return signals, summary
+
 def format_qty(qty: float) -> str:
     def trim(num):
         return f"{num:.1f}".rstrip("0").rstrip(".")
@@ -853,54 +980,44 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền.")
         return
-    data = await get_price_data()
-    orderbook = await get_orderbook2()
+    symbol = "HELIUSDT"
+    base_url = "https://api.mexc.com/api/v3/klines"
 
-    # EMA
-    ema_signal = "Tăng 📈 EMA5 vượt EMA20" if data["ema5"] > data["ema20"] else "Giảm 📉 EMA5 dưới EMA20"
+    tf_map = {"1h": "1h", "4h": "4h", "1d": "1d"}
+    results = {}
+    summaries = {}
 
-    # Buy/Sell Ratio
-    buy_vol = sum([q for _, q in orderbook["bids"]])
-    sell_vol = sum([q for _, q in orderbook["asks"]])
-    ratio = buy_vol / sell_vol if sell_vol > 0 else 0
-    if ratio > 1.2:
-        ratio_signal = "Nghiêng về Mua ✅"
-    elif ratio < 0.8:
-        ratio_signal = "Nghiêng về Bán ❌"
+    for tf, label in tf_map.items():
+        url = f"{base_url}?symbol={symbol}&interval={tf}&limit=300"
+        data = requests.get(url).json()
+        df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q","n","tb","tq","i"])
+        df["c"] = df["c"].astype(float)
+        df["h"] = df["h"].astype(float)
+        df["l"] = df["l"].astype(float)
+        df["v"] = df["v"].astype(float)
+
+        signals, summary = analyze_tf(df)
+        results[tf] = signals
+        summaries[tf] = summary
+
+    # Tổng hợp báo cáo
+    msg = "💹 *Xu hướng HELI*\n━━━━━━━━━━━━━━━\n"
+    msg += "\n⏱ Ngắn hạn (1h):\n" + "\n".join(results["1h"]) + f"\n👉 {summaries['1h']}\n"
+    msg += "\n📆 Trung hạn (4h):\n" + "\n".join(results["4h"]) + f"\n👉 {summaries['4h']}\n"
+    msg += "\n📅 Dài hạn (1D):\n" + "\n".join(results["1d"]) + f"\n👉 {summaries['1d']}\n"
+    msg += "\n━━━━━━━━━━━━━━━\n"
+    msg += "📊 *Nhận định tổng thể:*\n"
+    msg += f"• Xu hướng 1h: {summaries['1h']}\n"
+    msg += f"• Xu hướng 4h: {summaries['4h']}\n"
+    msg += f"• Xu hướng 1D: {summaries['1d']}\n"
+
+    # Gom trung + dài hạn
+    if summaries["4h"] == summaries["1d"]:
+        msg += f"• Trung & Dài hạn: {summaries['4h']}\n"
     else:
-        ratio_signal = "Trung tính ⚖️"
+        msg += f"• Trung & Dài hạn: {summaries['4h']} / {summaries['1d']}\n"
 
-    # Momentum
-    momentum = (data["current"] - data["avg24h"]) / data["avg24h"] * 100
-    if momentum > 3:
-        mom_signal = f"Tích cực (+{momentum:.2f}%) 🌟"
-    elif momentum < -3:
-        mom_signal = f"Tiêu cực ({momentum:.2f}%) ⚠️"
-    else:
-        mom_signal = f"Đi ngang ({momentum:.2f}%) ➡️"
-
-    # Kết luận
-    signals = [ema_signal, ratio_signal, mom_signal]
-    score_up = sum("Tăng" in s or "Mua" in s or "Tích cực" in s for s in signals)
-    score_down = sum("Giảm" in s or "Bán" in s or "Tiêu cực" in s for s in signals)
-
-    if score_up >= 2:
-        final = "📊 Xu hướng chung: TĂNG 🚀"
-    elif score_down >= 2:
-        final = "📊 Xu hướng chung: GIẢM 📉"
-    else:
-        final = "📊 Xu hướng chung: SIDEWAY ⚖️"
-
-    reply = f"""
-💹 Xu hướng Heli
----------------------
-📈 EMA: {ema_signal}
-⚖️ Buy/Sell Ratio = {ratio:.2f} → {ratio_signal}
-📊 Momentum 24h: {mom_signal}
----------------------
-{final}
-"""
-    await update.message.reply_text(reply)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 # Hàm lấy orderbook async
 async def get_orderbook():

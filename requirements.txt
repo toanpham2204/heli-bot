@@ -1,7 +1,8 @@
 aiohttp
-aiogram==3.*
 python-telegram-bot[webhooks]==20.3
 requests==2.32.3
 flask==3.0.3
 python-dateutil==2.9.0.post0
 beautifulsoup4==4.12.3
+pandas==2.2.2
+ta==0.11.0
