@@ -61,7 +61,13 @@ last_snapshot = {"asks": 0, "bids": 0, "time": 0}
 # Quản lý User
 # -------------------------------
 ADMIN_ID = 2028673755
-ALLOWED_USERS = {ADMIN_ID}
+# Đọc danh sách ID từ biến môi trường ALLOWED_IDS
+env_ids = os.getenv("ALLOWED_IDS", "")
+if env_ids.strip():
+    ALLOWED_USERS = set(map(int, env_ids.split(",")))
+else:
+    # fallback: chỉ có ADMIN_ID nếu không khai báo
+    ALLOWED_USERS = {ADMIN_ID}
 
 def is_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USERS
@@ -513,7 +519,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /apy - Tính APY staking (đã trừ commission)
 /coreteam - Tình trạng các ví Core Team
 /heatmap - Chi tiết lượng unstake trong 14 ngày
-/top10balance - Top 10 ví có số dư (balance) lớn nhất
 /orderbook - Tổng quan cung cầu MUA - BÁN
 /flow - Biến động M-B trong 1h
 /detect_doilai - Phát hiện ĐỘI LÁI
