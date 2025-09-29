@@ -989,17 +989,25 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     results = {}
     summaries = {}
+    labels = {}
 
-    for tf in tf_map:
+    for tf, label in tf_map.items():
         limit = 100
         url = f"{base_url}?symbol={symbol}&interval={tf}&limit={limit}"
         data = requests.get(url).json()
 
-        # Fallback cho 1h nếu không có dữ liệu
+        # Fallback cho 1h → thử lại với 15m
         if tf == "1h" and (not data or len(data) == 0):
-            limit = 50
-            url = f"{base_url}?symbol={symbol}&interval={tf}&limit={limit}"
+            url = f"{base_url}?symbol={symbol}&interval=15m&limit={limit}"
             data = requests.get(url).json()
+            if data and len(data) > 0:
+                label = "Ngắn hạn (15m fallback)"
+
+        if not data or len(data) == 0:
+            results[tf] = ["⚠️ Không có dữ liệu"]
+            summaries[tf] = "❓ Không xác định"
+            labels[tf] = label
+            continue
 
         # MEXC klines trả về 8 cột
         df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q"])
@@ -1008,16 +1016,17 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df["l"] = df["l"].astype(float)
         df["v"] = df["v"].astype(float)
 
-        print(f"[DEBUG] {tf} - Lấy {len(df)} nến từ MEXC (limit={limit})")
+        print(f"[DEBUG] {tf} - Lấy {len(df)} nến từ MEXC")
 
         signals, summary = analyze_tf(df)
         results[tf] = signals
         summaries[tf] = summary
+        labels[tf] = label
 
     # Xuất báo cáo
     msg = "💹 *Xu hướng HELI*\n━━━━━━━━━━━━━━━\n"
-    for tf, label in tf_map.items():
-        msg += f"\n⏱ {label}:\n" + "\n".join(results[tf]) + f"\n👉 {summaries[tf]}\n"
+    for tf in tf_map:
+        msg += f"\n⏱ {labels[tf]}:\n" + "\n".join(results[tf]) + f"\n👉 {summaries[tf]}\n"
 
     msg += "\n━━━━━━━━━━━━━━━\n📊 *Nhận định tổng thể:*\n"
     msg += f"• Xu hướng 1h: {summaries['1h']}\n"
