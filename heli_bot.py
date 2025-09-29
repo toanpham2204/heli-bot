@@ -993,7 +993,9 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for tf in tf_map:
         url = f"{base_url}?symbol={symbol}&interval={tf}&limit=300"
         data = requests.get(url).json()
-        df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q","n","tb","tq","i"])
+
+        # MEXC klines trả về 8 cột
+        df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q"])
         df["c"] = df["c"].astype(float)
         df["h"] = df["h"].astype(float)
         df["l"] = df["l"].astype(float)
