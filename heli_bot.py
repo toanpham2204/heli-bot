@@ -999,15 +999,15 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fallback_used = False
 
         # Fallback cho 1h → thử lại với 15m
-        if tf == "1h" and (not data or len(data) == 0):
+        if tf == "1h" and (not isinstance(data, list) or len(data) == 0):
             url = f"{base_url}?symbol={symbol}&interval=15m&limit={limit}"
             data = requests.get(url).json()
-            if data and len(data) > 0:
+            if isinstance(data, list) and len(data) > 0:
                 label = "Ngắn hạn (15m fallback)"
                 fallback_used = True
 
-        if not data or len(data) == 0:
-            results[tf] = ["⚠️ Không có dữ liệu"]
+        if not isinstance(data, list) or len(data) == 0:
+            results[tf] = ["⚠️ MEXC chưa có dữ liệu nến cho HELIUSDT"]
             summaries[tf] = "❓ Không xác định"
             labels[tf] = label
             continue
