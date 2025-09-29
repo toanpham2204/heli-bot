@@ -172,6 +172,9 @@ def supertrend(df, period=10, multiplier=3):
 
 # Hàm phân tích kỹ thuật cho 1 timeframe
 def analyze_tf(df):
+    if df.empty:
+        return ["⚠️ Không có dữ liệu"], "❓ Không xác định"
+
     ema5 = ta.trend.EMAIndicator(df['c'], 5).ema_indicator().iloc[-1]
     ema20 = ta.trend.EMAIndicator(df['c'], 20).ema_indicator().iloc[-1]
     ma50 = ta.trend.SMAIndicator(df['c'], 50).sma_indicator().iloc[-1]
@@ -230,10 +233,10 @@ def analyze_tf(df):
 
     # SAR
     if close > sar:
-        signals.append("🔵 SAR: Hỗ trợ (tín hiệu Tăng)")
+        signals.append("🔵 SAR: Hỗ trợ (Tăng)")
         score_up += 1
     else:
-        signals.append("🔴 SAR: Kháng cự (tín hiệu Giảm)")
+        signals.append("🔴 SAR: Kháng cự (Giảm)")
         score_down += 1
 
     # Volume
@@ -982,12 +985,12 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     symbol = "HELIUSDT"
     base_url = "https://api.mexc.com/api/v3/klines"
+    tf_map = {"1h": "Ngắn hạn (1h)", "4h": "Trung hạn (4h)", "1d": "Dài hạn (1D)"}
 
-    tf_map = {"1h": "1h", "4h": "4h", "1d": "1d"}
     results = {}
     summaries = {}
 
-    for tf, label in tf_map.items():
+    for tf in tf_map:
         url = f"{base_url}?symbol={symbol}&interval={tf}&limit=300"
         data = requests.get(url).json()
         df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","q","n","tb","tq","i"])
@@ -1000,18 +1003,17 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results[tf] = signals
         summaries[tf] = summary
 
-    # Tổng hợp báo cáo
+    # Xuất báo cáo
     msg = "💹 *Xu hướng HELI*\n━━━━━━━━━━━━━━━\n"
-    msg += "\n⏱ Ngắn hạn (1h):\n" + "\n".join(results["1h"]) + f"\n👉 {summaries['1h']}\n"
-    msg += "\n📆 Trung hạn (4h):\n" + "\n".join(results["4h"]) + f"\n👉 {summaries['4h']}\n"
-    msg += "\n📅 Dài hạn (1D):\n" + "\n".join(results["1d"]) + f"\n👉 {summaries['1d']}\n"
-    msg += "\n━━━━━━━━━━━━━━━\n"
-    msg += "📊 *Nhận định tổng thể:*\n"
+    for tf, label in tf_map.items():
+        msg += f"\n⏱ {label}:\n" + "\n".join(results[tf]) + f"\n👉 {summaries[tf]}\n"
+
+    msg += "\n━━━━━━━━━━━━━━━\n📊 *Nhận định tổng thể:*\n"
     msg += f"• Xu hướng 1h: {summaries['1h']}\n"
     msg += f"• Xu hướng 4h: {summaries['4h']}\n"
     msg += f"• Xu hướng 1D: {summaries['1d']}\n"
 
-    # Gom trung + dài hạn
+    # Trung + Dài hạn
     if summaries["4h"] == summaries["1d"]:
         msg += f"• Trung & Dài hạn: {summaries['4h']}\n"
     else:
