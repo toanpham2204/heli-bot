@@ -63,18 +63,45 @@ last_snapshot = {"asks": 0, "bids": 0, "time": 0}
 ADMIN_ID = 2028673755
 # Đọc danh sách ID từ biến môi trường ALLOWED_IDS
 env_ids = os.getenv("ALLOWED_IDS", "")
+ALLOWED_USERS = set()
+
 if env_ids.strip():
-    ALLOWED_USERS = set(map(int, env_ids.split(",")))
-else:
-    # fallback: chỉ có ADMIN_ID nếu không khai báo
-    ALLOWED_USERS = {ADMIN_ID}
+    # loại bỏ khoảng trắng khi split
+    ALLOWED_USERS = set(int(uid.strip()) for uid in env_ids.split(",") if uid.strip())
+
+# Luôn đảm bảo ADMIN_ID nằm trong danh sách
+ALLOWED_USERS.add(ADMIN_ID)
 
 def is_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USERS
 
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await update.message.reply_text(f"🆔 User ID của bạn: {user.id}\n👤 Username: @{user.username}")
+    user_id = update.effective_user.id
+    if is_allowed(user_id):
+        await update.message.reply_text(
+            f"👤 ID của bạn là `{user_id}` và đã có quyền.",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ ID của bạn là `{user_id}` nhưng *chưa được cấp quyền.*\n"
+            f"👉 Hãy gửi ID này cho admin để thêm vào biến `ALLOWED_IDS`.",
+            parse_mode="Markdown"
+        )
+
+async def showusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        await update.message.reply_text("🚫 Bạn không có quyền dùng lệnh này.")
+        return
+
+    if not ALLOWED_USERS:
+        await update.message.reply_text("⚠️ Hiện chưa có ID nào được cấp quyền.")
+        return
+
+    ids_list = "\n".join(f"- `{uid}`" for uid in sorted(ALLOWED_USERS))
+    msg = f"👥 *Danh sách ALLOWED_USERS:*\n{ids_list}"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -502,10 +529,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📖 Danh sách lệnh khả dụng:
 
 /help - Xem hướng dẫn
-/whoami - Hiển thị User ID của bạn
-/grant <id> - Cấp quyền cho user (admin)
-/revoke <id> - Thu hồi quyền user (admin)
+/whoami - Hiển thị ID và quyền của bạn
+/grant <id> - Cấp quyền tạm thời cho user (admin)
+/revoke <id> - Thu hồi tạm thời quyền user (admin)
 /clear - Xóa 50 tin nhắn gần đây
+/showusers - Liệt kê ID được cấp quyền
 /heliinfo - Tổng quan HELI
 
 /staked - Xem tổng HELI đã staking
@@ -518,6 +546,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /supply - Tổng cung HELI
 /apy - Tính APY staking (đã trừ commission)
 /coreteam - Tình trạng các ví Core Team
+
 /heatmap - Chi tiết lượng unstake trong 14 ngày
 /orderbook - Tổng quan cung cầu MUA - BÁN
 /flow - Biến động M-B trong 1h
@@ -1439,6 +1468,7 @@ def main():
     application.add_handler(CommandHandler("trend", trend_handler))
     application.add_handler(CommandHandler("support_resist", support_resist_handler))
     application.add_handler(CommandHandler("heliinfo", heliinfo))
+    application.add_handler(CommandHandler("showusers", showusers_handler))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
