@@ -1,4 +1,4 @@
-import panda as pd
+import pandas as pd
 import ta
 import json
 import time
