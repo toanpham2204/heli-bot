@@ -996,12 +996,15 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url = f"{base_url}?symbol={symbol}&interval={tf}&limit={limit}"
         data = requests.get(url).json()
 
+        fallback_used = False
+
         # Fallback cho 1h → thử lại với 15m
         if tf == "1h" and (not data or len(data) == 0):
             url = f"{base_url}?symbol={symbol}&interval=15m&limit={limit}"
             data = requests.get(url).json()
             if data and len(data) > 0:
                 label = "Ngắn hạn (15m fallback)"
+                fallback_used = True
 
         if not data or len(data) == 0:
             results[tf] = ["⚠️ Không có dữ liệu"]
@@ -1019,6 +1022,11 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"[DEBUG] {tf} - Lấy {len(df)} nến từ MEXC")
 
         signals, summary = analyze_tf(df)
+
+        # Nếu fallback → thêm cảnh báo
+        if fallback_used:
+            summary = f"{summary} ⚠️ (dùng 15m thay cho 1h)"
+
         results[tf] = signals
         summaries[tf] = summary
         labels[tf] = label
