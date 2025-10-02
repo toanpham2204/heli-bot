@@ -1112,10 +1112,18 @@ async def flow(update, context):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
         return
     global last_snapshot
-    total_asks, total_bids = await get_orderbookfull()
+    
+    # Biên độ mặc định ±20% (0.20)
+    try:
+        RANGE = float(context.args[0]) if context.args else 0.20
+    except ValueError:
+        RANGE = 0.20
+
+    # Lấy orderbook đầy đủ (có lọc theo biên độ)
+    total_asks, total_bids, market_price = await get_orderbookfull_filtered(RANGE)
     now = int(time.time())
 
-    msg = "📊 Dòng tiền Orderbook HELI/USDT (MEXC)\n"
+    msg = f"📊 Dòng tiền Orderbook HELI/USDT (MEXC)\n(Trong biên độ ±{RANGE*100:.0f}% quanh giá {market_price:.8f})\n"
 
     if last_snapshot["time"] == 0:
         # Lần đầu chạy
@@ -1127,10 +1135,10 @@ async def flow(update, context):
         bids_diff = total_bids - last_snapshot["bids"]
 
         msg += (
-            f"⏱ Thời gian so sánh: {delta_time:.1f} phút\n"
-            f"🔴 Asks: {last_snapshot['asks']:,.2f} → {total_asks:,.2f} "
+            f"⏱️ Thời gian so sánh: {delta_time:.1f} phút\n"
+            f"🔴 Lệnh Bán: {last_snapshot['asks']:,.2f} → {total_asks:,.2f} "
             f"({asks_diff:+,.2f})\n"
-            f"🟢 Bids: {last_snapshot['bids']:,.2f} → {total_bids:,.2f} "
+            f"🟢 Lệnh Mua: {last_snapshot['bids']:,.2f} → {total_bids:,.2f} "
             f"({bids_diff:+,.2f})\n\n"
         )
 
@@ -1145,6 +1153,24 @@ async def flow(update, context):
         last_snapshot = {"asks": total_asks, "bids": total_bids, "time": now}
 
     await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+
+# Hàm lọc theo biên độ
+async def get_orderbookfull_filtered(RANGE=0.20):
+    url = "https://api.mexc.com/api/v3/depth?symbol=HELIUSDT&limit=500"
+    data = requests.get(url).json()
+    bids = [(float(p), float(q)) for p, q in data["bids"]]
+    asks = [(float(p), float(q)) for p, q in data["asks"]]
+
+    # Giá thị trường = trung bình bid top1 và ask top1
+    market_price = (bids[0][0] + asks[0][0]) / 2
+    min_price = market_price * (1 - RANGE)
+    max_price = market_price * (1 + RANGE)
+
+    # Lọc trong biên độ
+    total_bids = sum(q for p, q in bids if min_price <= p <= max_price)
+    total_asks = sum(q for p, q in asks if min_price <= p <= max_price)
+
+    return total_asks, total_bids, market_price
 
 async def orderbook(update, context):
     if not is_allowed(update.effective_user.id):
