@@ -96,12 +96,14 @@ async def showusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚫 Bạn không có quyền dùng lệnh này.")
         return
 
-    if not ALLOWED_USERS:
-        await update.message.reply_text("⚠️ Hiện chưa có ID nào được cấp quyền.")
+    env_ids = os.getenv("ALLOWED_IDS", "")
+    if not env_ids.strip():
+        await update.message.reply_text("⚠️ Hiện chưa có ID nào trong ALLOWED_IDS (biến môi trường).")
         return
 
-    ids_list = "\n".join(f"- `{uid}`" for uid in sorted(ALLOWED_USERS))
-    msg = f"👥 *Danh sách ALLOWED_USERS:*\n{ids_list}"
+    ids = [uid.strip() for uid in env_ids.split(",") if uid.strip()]
+    ids_list = "\n".join(f"- `{uid}`" for uid in sorted(ids, key=lambda x: int(x)))
+    msg = f"👥 *Danh sách ID trong ALLOWED_IDS (Render Env):*\n{ids_list}"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
