@@ -14,6 +14,15 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from bs4 import BeautifulSoup
+from ta.momentum import RSIIndicator, StochasticOscillator
+from ta.trend import MACD, EMAIndicator
+from ta.volatility import BollingerBands
+from ta.trend import PSARIndicator
+
+# --- Biến toàn cục ---
+auto_signal_enabled = False
+signal_symbols = ["HELIUSDT"]  # danh sách coin theo dõi tự động
+ACTIVE_SIGNAL_USERS = set()    # user đã bật /signal on
 
 # Khởi tạo order_memory lưu tối đa 12 lần check ≈ 1 phút
 order_memory = deque(maxlen=60)  # lưu 60 lần check ≈ 1 giờ nếu check mỗi phút
@@ -141,6 +150,102 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 # Helper Functions
 # -------------------------------
+
+# --- Lấy dữ liệu từ API MEXC ---
+async def fetch_ohlcv(symbol: str, interval: str = "1h", limit: int = 200):
+    url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            data = await resp.json()
+            df = pd.DataFrame(data, columns=[
+                "timestamp", "open", "high", "low", "close", "volume",
+                "close_time", "quote_asset_volume", "num_trades",
+                "taker_buy_base", "taker_buy_quote", "ignore"
+            ])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+            return df
+
+
+# --- Tính các chỉ báo kỹ thuật ---
+def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    # RSI
+    df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+
+    # Stochastic RSI
+    stoch = StochasticOscillator(high=df["high"], low=df["low"], close=df["close"], window=14, smooth_window=3)
+    df["stoch_k"] = stoch.stoch()
+    df["stoch_d"] = stoch.stoch_signal()
+
+    # MACD
+    macd = MACD(close=df["close"], window_slow=26, window_fast=12, window_sign=9)
+    df["macd"] = macd.macd()
+    df["macd_signal"] = macd.macd_signal()
+
+    # EMA
+    df["ema8"] = EMAIndicator(close=df["close"], window=8).ema_indicator()
+    df["ema21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
+    df["ema50"] = EMAIndicator(close=df["close"], window=50).ema_indicator()
+    df["ema200"] = EMAIndicator(close=df["close"], window=200).ema_indicator()
+
+    # Bollinger Bands
+    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+    df["bb_upper"] = bb.bollinger_hband()
+    df["bb_lower"] = bb.bollinger_lband()
+
+    # Parabolic SAR
+    sar = PSARIndicator(high=df["high"], low=df["low"], close=df["close"], step=0.02, max_step=0.2)
+    df["sar"] = sar.psar()
+
+    return df
+
+
+# --- Tạo tín hiệu heuristic (MUA/BÁN/TRUNG LẬP) ---
+def generate_signal(df: pd.DataFrame):
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    signal = "⚖️ Trung lập"
+    reason = []
+
+    # RSI
+    if latest["rsi"] < 30:
+        reason.append("RSI < 30 (vùng quá bán)")
+    elif latest["rsi"] > 70:
+        reason.append("RSI > 70 (vùng quá mua)")
+
+    # StochRSI
+    if latest["stoch_k"] < 20 and latest["stoch_d"] < 20:
+        reason.append("StochRSI quá bán")
+    elif latest["stoch_k"] > 80 and latest["stoch_d"] > 80:
+        reason.append("StochRSI quá mua")
+
+    # MACD crossover
+    if latest["macd"] > latest["macd_signal"] and prev["macd"] <= prev["macd_signal"]:
+        reason.append("MACD giao cắt lên (tín hiệu tăng)")
+    elif latest["macd"] < latest["macd_signal"] and prev["macd"] >= prev["macd_signal"]:
+        reason.append("MACD giao cắt xuống (tín hiệu giảm)")
+
+    # EMA trend
+    if latest["close"] > latest["ema8"] > latest["ema21"]:
+        reason.append("Giá nằm trên EMA8 & EMA21 (xu hướng tăng)")
+    elif latest["close"] < latest["ema8"] < latest["ema21"]:
+        reason.append("Giá nằm dưới EMA8 & EMA21 (xu hướng giảm)")
+
+    # Tổng hợp tín hiệu
+    if any("quá bán" in r or "giao cắt lên" in r for r in reason):
+        signal = "✅ MUA"
+    elif any("quá mua" in r or "giao cắt xuống" in r for r in reason):
+        signal = "🚫 BÁN"
+
+    # Phát hiện FOMO / Panic (tiếng Việt)
+    vol_ratio = latest["volume"] / df["volume"].mean()
+    if vol_ratio > 2 and latest["close"] > prev["close"] * 1.03:
+        reason.append("⚠️ FOMO (tâm lý hưng phấn): khối lượng tăng mạnh và giá tăng >3%")
+    elif vol_ratio > 2 and latest["close"] < prev["close"] * 0.97:
+        reason.append("⚠️ Panic (tâm lý hoảng loạn): khối lượng tăng mạnh và giá giảm >3%")
+
+    return signal, reason
+
 # Supertrend helper
 def supertrend(df, period=10, multiplier=3):
     hl2 = (df['h'] + df['l']) / 2
@@ -685,6 +790,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /detect_doilai - Phát hiện ĐỘI LÁI
 /alert - Cảnh báo Spam lệnh mồi
 /trend - Đánh giá xu hướng HELI
+/signal - Chỉ báo tín hiệu Mua/ Bán
 """
     await update.message.reply_text(help_text)
 
@@ -1458,24 +1564,6 @@ async def coreteam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "📊 **Tình trạng ví Core Team**\n\n" + "\n\n".join(results)
     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
-async def allaccounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(EXPLORER_URL, timeout=20) as resp:
-                html = await resp.text()
-
-        match = re.search(r"A total of\s+([\d,]+)\s+token holders found", html)
-        if match:
-            total_accounts = int(match.group(1).replace(",", ""))
-            msg = f"👥 Total Accounts: {total_accounts}"
-        else:
-            msg = "👥 Total Accounts: Không lấy được từ Explorer"
-
-        await update.message.reply_text(msg)
-
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Lỗi khi lấy total accounts: {e}")
-
 async def get_market_price():
     try:
         # Ưu tiên lấy giá từ MEXC
@@ -1602,7 +1690,117 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+# --- Handler cho lệnh /signal ---
+async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global ACTIVE_SIGNAL_USERS
 
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "(không có username)"
+
+    # Kiểm tra quyền truy cập
+    if not is_allowed(user_id):
+        await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
+        return
+
+    # Nếu không truyền tham số → chạy mặc định HELIUSDT
+    if len(context.args) == 0:
+        symbol = "HELIUSDT"
+    else:
+        arg = context.args[0].upper()
+
+        # ✅ Bật auto-signal cho user
+        if arg == "ON":
+            ACTIVE_SIGNAL_USERS.add(user_id)
+            await update.message.reply_text("🔔 Bạn đã bật chế độ nhận tín hiệu tự động.")
+            return
+
+        # ✅ Tắt auto-signal cho user
+        elif arg == "OFF":
+            ACTIVE_SIGNAL_USERS.discard(user_id)
+            await update.message.reply_text("🛑 Bạn đã tắt chế độ nhận tín hiệu tự động.")
+            return
+
+        # ✅ Liệt kê danh sách user đang bật ON (chỉ admin)
+        elif arg == "LIST":
+            if user_id != ADMIN_ID:
+                await update.message.reply_text("🚫 Lệnh này chỉ dành cho admin.")
+                return
+
+            if not ACTIVE_SIGNAL_USERS:
+                await update.message.reply_text("📭 Hiện không có user nào bật tín hiệu tự động.")
+                return
+
+            # Tạo danh sách hiển thị
+            user_lines = []
+            for uid in ACTIVE_SIGNAL_USERS:
+                try:
+                    chat = await context.bot.get_chat(uid)
+                    name_display = f"@{chat.username}" if chat.username else f"{chat.first_name} (ID {uid})"
+                except:
+                    name_display = f"ID {uid}"
+                user_lines.append(f"• {name_display}")
+
+            msg = "📋 Danh sách user đang bật auto-signal:\n" + "\n".join(user_lines)
+            await update.message.reply_text(msg)
+            return
+
+        # ✅ Nếu là cặp coin khác (VD: BTCUSDT)
+        else:
+            symbol = arg
+
+    # ✅ Phân tích tín hiệu thủ công
+    try:
+        df = await fetch_ohlcv(symbol)
+        df = calculate_indicators(df)
+        sig, reasons = generate_signal(df)
+        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 1h\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(reasons[-5:])
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi khi xử lý tín hiệu: {e}")
+
+
+
+import traceback
+
+last_signal = {}  # lưu tín hiệu cuối cùng của từng symbol
+
+async def check_auto_signal(app):
+    """Tự động kiểm tra tín hiệu và gửi đến user đã bật /signal on"""
+    global last_signal, ACTIVE_SIGNAL_USERS
+
+    while True:
+        if ACTIVE_SIGNAL_USERS:  # chỉ chạy nếu có user bật on
+            for symbol in signal_symbols:
+                try:
+                    df = await fetch_ohlcv(symbol)
+                    df = calculate_indicators(df)
+                    sig, reasons = generate_signal(df)
+
+                    # Chỉ gửi khi tín hiệu thay đổi
+                    if sig != "⚖️ Trung lập" and last_signal.get(symbol) != sig:
+                        last_signal[symbol] = sig
+                        msg = (
+                            f"⚡ [Tự động] Tín hiệu {symbol}\n"
+                            f"Kết luận: {sig}\n\n"
+                            f"🔍 Phân tích:\n- " + "\n- ".join(reasons[-4:])
+                        )
+
+                        # Gửi tới từng user đã bật /signal on
+                        for user_id in ACTIVE_SIGNAL_USERS.copy():
+                            try:
+                                if user_id in ALLOWED_USERS:
+                                    await app.bot.send_message(chat_id=user_id, text=msg)
+                            except Exception as send_err:
+                                print(f"❌ Không gửi được tới {user_id}: {send_err}")
+
+                except Exception as e:
+                    print("Signal check error:", e)
+                    traceback.print_exc()
+
+        # Kiểm tra lại mỗi 1 giờ
+        await asyncio.sleep(3600)
+
+# =============================================================
 
 # -------------------------------
 # Main
@@ -1635,7 +1833,7 @@ def main():
     application.add_handler(CommandHandler("validator", validator))
     application.add_handler(CommandHandler("coreteam", coreteam))
     application.add_handler(CommandHandler("heatmap", heatmap))
-    application.add_handler(CommandHandler("allaccounts", allaccounts))
+    application.add_handler(CommandHandler("signal", signal_handler))
     application.add_handler(CommandHandler("orderbook", orderbook))
     application.add_handler(CommandHandler("flow", flow))
     application.add_handler(CommandHandler("detect_doilai", detect_doilai))
@@ -1644,6 +1842,8 @@ def main():
     application.add_handler(CommandHandler("support_resist", support_resist_handler))
     application.add_handler(CommandHandler("heliinfo", heliinfo))
     application.add_handler(CommandHandler("showusers", showusers_handler))
+
+    app.job_queue.run_once(lambda ctx: asyncio.create_task(check_auto_signal(app)), 5)
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
