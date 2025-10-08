@@ -191,82 +191,156 @@ async def fetch_ohlcv(symbol: str, interval: str = "15m", limit: int = 200):
 
 # --- Tính các chỉ báo kỹ thuật ---
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    # RSI
-    df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+    """
+    Tính toán các chỉ báo kỹ thuật được tinh chỉnh cho khung 15 phút.
+    Phù hợp để phát hiện tín hiệu đảo chiều ngắn hạn và cảnh báo FOMO/Panic.
+    """
 
-    # Stochastic RSI
+    # ===== RSI =====
+    # RSI ngắn (9) phản ứng nhanh, RSI dài (21) giúp xác nhận xu hướng.
+    df["rsi_fast"] = RSIIndicator(close=df["close"], window=9).rsi()
+    df["rsi_slow"] = RSIIndicator(close=df["close"], window=21).rsi()
+    df["rsi"] = df["rsi_fast"]  # Dùng RSI nhanh cho tín hiệu chính
+
+    # ===== Stochastic RSI =====
     stoch = StochasticOscillator(high=df["high"], low=df["low"], close=df["close"], window=14, smooth_window=3)
     df["stoch_k"] = stoch.stoch()
     df["stoch_d"] = stoch.stoch_signal()
 
-    # MACD
+    # ===== MACD =====
+    # Giữ cấu hình gần chuẩn (12,26,9) để tín hiệu phản ứng nhanh hơn.
     macd = MACD(close=df["close"], window_slow=26, window_fast=12, window_sign=9)
     df["macd"] = macd.macd()
     df["macd_signal"] = macd.macd_signal()
+    df["macd_hist"] = macd.macd_diff()
 
-    # EMA
+    # ===== EMA =====
+    # Tinh chỉnh cho 15m: giữ cụm EMA động lượng và xu hướng chính.
     df["ema8"] = EMAIndicator(close=df["close"], window=8).ema_indicator()
     df["ema21"] = EMAIndicator(close=df["close"], window=21).ema_indicator()
-    df["ema50"] = EMAIndicator(close=df["close"], window=50).ema_indicator()
+    df["ema65"] = EMAIndicator(close=df["close"], window=65).ema_indicator()
     df["ema200"] = EMAIndicator(close=df["close"], window=200).ema_indicator()
 
-    # Bollinger Bands
-    bb = BollingerBands(close=df["close"], window=40, window_dev=2)
+    # ===== Bollinger Bands =====
+    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
     df["bb_upper"] = bb.bollinger_hband()
     df["bb_lower"] = bb.bollinger_lband()
+    df["bb_mid"] = bb.bollinger_mavg()
 
-    # Parabolic SAR
+    # ===== Parabolic SAR =====
     sar = PSARIndicator(high=df["high"], low=df["low"], close=df["close"], step=0.02, max_step=0.2)
     df["sar"] = sar.psar()
+
+    # ===== Volume động (giúp nhận biết FOMO/Panic) =====
+    df["vol_ma"] = df["volume"].rolling(window=20).mean()
+    df["vol_ratio"] = df["volume"] / df["vol_ma"]
 
     return df
 
 
+
 # --- Tạo tín hiệu heuristic (MUA/BÁN/TRUNG LẬP) ---
 def generate_signal(df: pd.DataFrame):
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
+    """
+    Sinh tín hiệu giao dịch dựa trên các chỉ báo kỹ thuật
+    (phiên bản tối ưu cho khung 15 phút – HELIUSDT, dữ liệu MEXC).
+    """
+
+    reasons = []
     signal = "⚖️ Trung lập"
-    reason = []
 
-    # RSI
-    if latest["rsi"] < 30:
-        reason.append("RSI < 30 (vùng quá bán)")
-    elif latest["rsi"] > 70:
-        reason.append("RSI > 70 (vùng quá mua)")
+    # Bảo vệ khi dữ liệu thiếu
+    if df is None or len(df) < 5:
+        return signal, ["Không đủ dữ liệu để tính toán."]
 
-    # StochRSI
-    if latest["stoch_k"] < 20 and latest["stoch_d"] < 20:
-        reason.append("StochRSI quá bán")
-    elif latest["stoch_k"] > 80 and latest["stoch_d"] > 80:
-        reason.append("StochRSI quá mua")
+    # Lấy dòng mới nhất
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
-    # MACD crossover
-    if latest["macd"] > latest["macd_signal"] and prev["macd"] <= prev["macd_signal"]:
-        reason.append("MACD giao cắt lên (tín hiệu tăng)")
-    elif latest["macd"] < latest["macd_signal"] and prev["macd"] >= prev["macd_signal"]:
-        reason.append("MACD giao cắt xuống (tín hiệu giảm)")
+    rsi = last["rsi"]
+    stoch_k = last["stoch_k"]
+    stoch_d = last["stoch_d"]
+    macd = last["macd"]
+    macd_signal = last["macd_signal"]
+    ema8 = last["ema8"]
+    ema21 = last["ema21"]
+    ema65 = last["ema65"]
+    ema200 = last["ema200"]
+    price = last["close"]
+    sar = last["sar"]
+    vol_ratio = last.get("vol_ratio", 1.0)
 
-    # EMA trend
-    if latest["close"] > latest["ema8"] > latest["ema21"]:
-        reason.append("Giá nằm trên EMA8 & EMA21 (xu hướng tăng)")
-    elif latest["close"] < latest["ema8"] < latest["ema21"]:
-        reason.append("Giá nằm dưới EMA8 & EMA21 (xu hướng giảm)")
+    # ====== PHÂN TÍCH XU HƯỚNG ======
+    if ema8 > ema21 > ema65:
+        reasons.append("📈 Xu hướng tăng ngắn hạn (EMA8 > EMA21 > EMA65)")
+    elif ema8 < ema21 < ema65:
+        reasons.append("📉 Xu hướng giảm ngắn hạn (EMA8 < EMA21 < EMA65)")
+    else:
+        reasons.append("⚖️ EMA đang giao cắt lẫn nhau, xu hướng chưa rõ.")
 
-    # Tổng hợp tín hiệu
-    if any("quá bán" in r or "giao cắt lên" in r for r in reason):
-        signal = "✅ MUA"
-    elif any("quá mua" in r or "giao cắt xuống" in r for r in reason):
-        signal = "🚫 BÁN"
+    # ====== PHÂN TÍCH RSI ======
+    if rsi > 70:
+        reasons.append(f"RSI {rsi:.1f} > 70 → Quá mua.")
+    elif rsi < 30:
+        reasons.append(f"RSI {rsi:.1f} < 30 → Quá bán.")
+    else:
+        reasons.append(f"RSI trung tính ({rsi:.1f}).")
 
-    # Phát hiện FOMO / Panic (tiếng Việt)
-    vol_ratio = latest["volume"] / df["volume"].mean()
-    if vol_ratio > 2 and latest["close"] > prev["close"] * 1.03:
-        reason.append("⚠️ FOMO (tâm lý hưng phấn): khối lượng tăng mạnh và giá tăng >3%")
-    elif vol_ratio > 2 and latest["close"] < prev["close"] * 0.97:
-        reason.append("⚠️ Panic (tâm lý hoảng loạn): khối lượng tăng mạnh và giá giảm >3%")
+    # ====== PHÂN TÍCH Stochastic ======
+    if stoch_k > 80 and stoch_d > 80:
+        reasons.append("Stochastic đang trong vùng quá mua.")
+    elif stoch_k < 20 and stoch_d < 20:
+        reasons.append("Stochastic đang trong vùng quá bán.")
 
-    return signal, reason
+    # ====== PHÂN TÍCH MACD ======
+    if macd > macd_signal:
+        reasons.append("MACD cắt lên đường tín hiệu → Động lượng tăng.")
+    elif macd < macd_signal:
+        reasons.append("MACD cắt xuống đường tín hiệu → Động lượng giảm.")
+
+    # ====== PHÂN TÍCH SAR ======
+    if price > sar:
+        reasons.append("Giá nằm trên SAR → Xu hướng ngắn hạn tăng.")
+    else:
+        reasons.append("Giá nằm dưới SAR → Xu hướng ngắn hạn giảm.")
+
+    # ====== PHÂN TÍCH KHỐI LƯỢNG (FOMO / PANIC) ======
+    if vol_ratio > 2.5 and rsi > 65:
+        reasons.append("⚠️ Cảnh báo FOMO: Khối lượng tăng mạnh và RSI cao.")
+    elif vol_ratio < 0.5 and rsi < 35:
+        reasons.append("😨 Cảnh báo Panic: Bán tháo, khối lượng giảm mạnh.")
+
+    # ====== KẾT HỢP RA TÍN HIỆU MUA / BÁN ======
+    buy_conditions = [
+        (ema8 > ema21),
+        (macd > macd_signal),
+        (rsi > 40 and rsi < 70),
+        (price > ema8),
+        (stoch_k > stoch_d)
+    ]
+
+    sell_conditions = [
+        (ema8 < ema21),
+        (macd < macd_signal),
+        (rsi > 70 or rsi < 30),
+        (price < ema21),
+        (stoch_k < stoch_d)
+    ]
+
+    buy_score = sum(buy_conditions)
+    sell_score = sum(sell_conditions)
+
+    if buy_score >= 4 and sell_score <= 2:
+        signal = "🟢 MUA"
+    elif sell_score >= 4 and buy_score <= 2:
+        signal = "🔴 BÁN"
+    else:
+        signal = "⚖️ Trung lập"
+
+    reasons.append(f"✅ Tổng điểm MUA: {buy_score}, BÁN: {sell_score}")
+
+    return signal, reasons
+
 
 # Supertrend helper
 def supertrend(df, period=10, multiplier=3):
