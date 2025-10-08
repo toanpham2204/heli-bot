@@ -1805,17 +1805,25 @@ async def check_auto_signal(app):
 # -------------------------------
 # Main
 # -------------------------------
-async def main():
+def main():
+    import threading
     from telegram.request import HTTPXRequest
-    request = HTTPXRequest(connect_timeout=20, read_timeout=20, write_timeout=20, pool_timeout=20)
+
+    request = HTTPXRequest(
+        connect_timeout=20,
+        read_timeout=20,
+        write_timeout=20,
+        pool_timeout=20
+    )
+
     application = Application.builder().token(BOT_TOKEN).request(request).build()
 
-    # Lệnh quản lý user
+    # === Lệnh quản lý user ===
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("grant", grant))
     application.add_handler(CommandHandler("revoke", revoke))
 
-    # Đăng ký command
+    # === Lệnh chính ===
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("ping", ping))
@@ -1840,25 +1848,36 @@ async def main():
     application.add_handler(CommandHandler("heliinfo", heliinfo))
     application.add_handler(CommandHandler("showusers", showusers_handler))
 
-    # ✅ Chạy task kiểm tra tín hiệu song song
-    asyncio.create_task(check_auto_signal(application))
+    # === Khởi động task auto-signal chạy nền ===
+    def run_auto_signal():
+        try:
+            import asyncio
+            asyncio.run(check_auto_signal(application))
+        except Exception as e:
+            logging.error(f"Lỗi trong check_auto_signal(): {e}")
 
+    threading.Thread(target=run_auto_signal, daemon=True).start()
+    logging.info("🔄 Nhiệm vụ auto-signal đã khởi động nền...")
+
+    # === Khởi động bot ===
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
-    # ✅ Chạy webhook (Render) hoặc fallback sang polling
     if os.getenv("RENDER") == "true":
         port = int(os.environ.get("PORT", "10000"))
-        await application.run_webhook(
+        application.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=BOT_TOKEN,
             webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
         )
     else:
-        await application.run_polling()
+        application.run_polling()
 
 
 if __name__ == "__main__":
     import logging
-    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-    asyncio.run(main())
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        level=logging.INFO
+    )
+    main()
