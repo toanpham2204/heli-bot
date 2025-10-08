@@ -278,17 +278,16 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def generate_signal(df: pd.DataFrame):
     """
     Sinh tín hiệu giao dịch dựa trên các chỉ báo kỹ thuật
-    (phiên bản tối ưu cho khung 15 phút – HELIUSDT, dữ liệu MEXC).
+    (phiên bản tối ưu cho khung 15 phút – có hiển thị chi tiết & mức độ tín hiệu).
     """
 
     reasons = []
     signal = "⚖️ Trung lập"
 
-    # Bảo vệ khi dữ liệu thiếu
+    # Bảo vệ dữ liệu
     if df is None or len(df) < 5:
         return signal, ["Không đủ dữ liệu để tính toán."]
 
-    # Lấy dòng mới nhất
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -306,46 +305,56 @@ def generate_signal(df: pd.DataFrame):
     vol_ratio = last.get("vol_ratio", 1.0)
 
     # ====== PHÂN TÍCH XU HƯỚNG ======
+    trend_text = "Không rõ"
     if ema8 > ema21 > ema65:
         reasons.append("📈 Xu hướng tăng ngắn hạn (EMA8 > EMA21 > EMA65)")
+        trend_text = "Tăng"
     elif ema8 < ema21 < ema65:
         reasons.append("📉 Xu hướng giảm ngắn hạn (EMA8 < EMA21 < EMA65)")
+        trend_text = "Giảm"
     else:
         reasons.append("⚖️ EMA đang giao cắt lẫn nhau, xu hướng chưa rõ.")
 
-    # ====== PHÂN TÍCH RSI ======
+    # ====== RSI ======
     if rsi > 70:
-        reasons.append(f"RSI {rsi:.1f} > 70 → Quá mua.")
+        rsi_text = f"{rsi:.1f} (Quá mua)"
+        reasons.append(f"RSI {rsi_text}.")
     elif rsi < 30:
-        reasons.append(f"RSI {rsi:.1f} < 30 → Quá bán.")
+        rsi_text = f"{rsi:.1f} (Quá bán)"
+        reasons.append(f"RSI {rsi_text}.")
     else:
+        rsi_text = f"{rsi:.1f} (Trung tính)"
         reasons.append(f"RSI trung tính ({rsi:.1f}).")
 
-    # ====== PHÂN TÍCH Stochastic ======
+    # ====== MACD ======
+    if macd > macd_signal:
+        macd_text = "Dương"
+        reasons.append("MACD cắt lên đường tín hiệu → Động lượng tăng.")
+    elif macd < macd_signal:
+        macd_text = "Âm"
+        reasons.append("MACD cắt xuống đường tín hiệu → Động lượng giảm.")
+    else:
+        macd_text = "Trung tính"
+
+    # ====== Stochastic ======
     if stoch_k > 80 and stoch_d > 80:
         reasons.append("Stochastic đang trong vùng quá mua.")
     elif stoch_k < 20 and stoch_d < 20:
         reasons.append("Stochastic đang trong vùng quá bán.")
 
-    # ====== PHÂN TÍCH MACD ======
-    if macd > macd_signal:
-        reasons.append("MACD cắt lên đường tín hiệu → Động lượng tăng.")
-    elif macd < macd_signal:
-        reasons.append("MACD cắt xuống đường tín hiệu → Động lượng giảm.")
-
-    # ====== PHÂN TÍCH SAR ======
+    # ====== SAR ======
     if price > sar:
         reasons.append("Giá nằm trên SAR → Xu hướng ngắn hạn tăng.")
     else:
         reasons.append("Giá nằm dưới SAR → Xu hướng ngắn hạn giảm.")
 
-    # ====== PHÂN TÍCH KHỐI LƯỢNG (FOMO / PANIC) ======
+    # ====== Volume (FOMO / Panic) ======
     if vol_ratio > 2.5 and rsi > 65:
         reasons.append("⚠️ Cảnh báo FOMO: Khối lượng tăng mạnh và RSI cao.")
     elif vol_ratio < 0.5 and rsi < 35:
         reasons.append("😨 Cảnh báo Panic: Bán tháo, khối lượng giảm mạnh.")
 
-    # ====== KẾT HỢP RA TÍN HIỆU MUA / BÁN ======
+    # ====== CHẤM ĐIỂM ======
     buy_conditions = [
         (ema8 > ema21),
         (macd > macd_signal),
@@ -353,7 +362,6 @@ def generate_signal(df: pd.DataFrame):
         (price > ema8),
         (stoch_k > stoch_d)
     ]
-
     sell_conditions = [
         (ema8 < ema21),
         (macd < macd_signal),
@@ -365,16 +373,38 @@ def generate_signal(df: pd.DataFrame):
     buy_score = sum(buy_conditions)
     sell_score = sum(sell_conditions)
 
+    # ====== KẾT LUẬN HEURISTIC ======
+    strength_text = "Trung lập"
     if buy_score >= 4 and sell_score <= 2:
-        signal = "🟢 MUA"
+        if buy_score == 5:
+            signal = "🟢 MUA mạnh"
+            strength_text = "Tín hiệu mua rất mạnh (5/5 chỉ báo ủng hộ)"
+        else:
+            signal = "🟢 MUA yếu"
+            strength_text = "Xu hướng nghiêng tăng (đa phần chỉ báo ủng hộ)"
     elif sell_score >= 4 and buy_score <= 2:
-        signal = "🔴 BÁN"
+        if sell_score == 5:
+            signal = "🔴 BÁN mạnh"
+            strength_text = "Tín hiệu bán rất mạnh (5/5 chỉ báo ủng hộ)"
+        else:
+            signal = "🔴 BÁN yếu"
+            strength_text = "Xu hướng nghiêng giảm (đa phần chỉ báo ủng hộ)"
     else:
-        signal = "⚖️ Trung lập"
+        signal = "⚪ Trung lập yếu"
+        strength_text = "Thị trường sideway hoặc tín hiệu yếu."
 
+    # ====== HIỂN THỊ CHI TIẾT ======
     reasons.append(f"✅ Tổng điểm MUA: {buy_score}, BÁN: {sell_score}")
+    reasons.append("")
+    reasons.append("📊 Chi tiết tín hiệu:")
+    reasons.append(f"• 📈 EMA: {trend_text}")
+    reasons.append(f"• 💹 MACD: {macd_text}")
+    reasons.append(f"• 🎯 RSI: {rsi_text}")
+    reasons.append(f"• 🧭 Xu hướng tổng thể: {strength_text}")
 
     return signal, reasons
+
+
 
 
 # Supertrend helper
