@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: heli-bot
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python heli_bot.py"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false   # thiết lập trong dashboard Render, không commit token

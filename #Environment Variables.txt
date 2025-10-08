@@ -1,0 +1,11 @@
+#Environment Variables
+BOT_TOKEN	8203698522:AAGsQwIs5jmf7bfzL46C2z6gYy4ENBJBECg
+LCD_ENDPOINT	https://lcd.helichain.com
+RENDER_URL	https://heli-bot-xv19.onrender.com
+RPC_ENDPOINT	https://rpc.helichain.com
+
+#Building command
+pip install -r requirements.txt
+
+#Start command
+python heli_bot.py
