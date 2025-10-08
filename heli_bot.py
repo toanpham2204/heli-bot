@@ -1925,7 +1925,7 @@ async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         sig, reasons = generate_signal(df)
 
-        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 15 phút\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(reasons[-5:])
+        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 15 phút\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(analysis_lines)
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi khi xử lý tín hiệu: {e}")
@@ -1949,12 +1949,20 @@ async def check_auto_signal(app):
                     sig, reasons = generate_signal(df)
 
                     # Chỉ gửi khi tín hiệu thay đổi
-                    if sig != "⚖️ Trung lập" and last_signal.get(symbol) != sig:
-                        last_signal[symbol] = sig
+                    if sig != "⚪ Trung lập yếu":  # hoặc tùy điều kiện gửi
+                        # Lấy dòng tổng điểm + 4 dòng chi tiết
+                        summary_lines = []
+                        for r in reasons:
+                            if r.startswith("✅ Tổng điểm"):
+                                summary_lines.append(r)
+                            if r.startswith("• "):  # các dòng chi tiết đã format sẵn
+                                summary_lines.append(r)
+                        summary_text = "\n- " + "\n- ".join(summary_lines[:5]) if summary_lines else ""
+
                         msg = (
                             f"⚡ [Tự động] Tín hiệu {symbol}\n"
-                            f"Kết luận: {sig}\n\n"
-                            f"🔍 Phân tích:\n- " + "\n- ".join(reasons[-4:])
+                            f"Kết luận: {sig}"
+                            f"{summary_text}"
                         )
 
                         # Gửi tới từng user đã bật /signal on
