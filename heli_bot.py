@@ -26,9 +26,9 @@ MAX_PRICEDISPLAY = 10              # số mức giá hiển thị
 # Lưu chat_id của user khi /start
 user_chats = set()
 
-# -------------------------------
+# ===============================================
 # Cấu hình
-# -------------------------------
+# ===============================================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -59,9 +59,9 @@ CORE_WALLETS = {
 # Bộ nhớ tạm để lưu snapshot
 last_snapshot = {"asks": 0, "bids": 0, "time": 0}
 
-# -------------------------------
+# ===============================================
 # Quản lý User
-# -------------------------------
+# ===============================================
 ADMIN_ID = 2028673755
 # Đọc danh sách ID từ biến môi trường ALLOWED_IDS
 env_ids = os.getenv("ALLOWED_IDS", "")
@@ -106,7 +106,6 @@ async def showusers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"👥 *Danh sách ID trong ALLOWED_IDS (Render Env):*\n{ids_list}"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("🚫 Bạn không có quyền thêm user.")
@@ -138,9 +137,9 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("⚠️ User ID không hợp lệ.")
 
-# -------------------------------
+# ===============================================
 # Helper Functions
-# -------------------------------
+# ===============================================
 # Supertrend helper
 def supertrend(df, period=10, multiplier=3):
     hl2 = (df['h'] + df['l']) / 2
@@ -297,8 +296,6 @@ def make_ascii_chart(data, label, total):
     lines.append(f"{label} {'Tổng':<10} | {'-':<10} | {'-':<6} | 100.0%")
     return "\n".join(lines)
 
-
-
 def get_unbonding_heatmap():
     """Trả về heatmap HELI unbonding theo số ngày còn lại."""
     try:
@@ -337,7 +334,7 @@ def get_unbonding_heatmap():
                             if 0 <= days_left <= 14:
                                 heatmap[days_left] += bal
                         except Exception as e:
-                            logging.warning(f"Lỗi parse completion_time: {e}")
+                            logging.debug(f"Lỗi parse completion_time: {e}")
 
                 page_key = r.get("pagination", {}).get("next_key")
                 if not page_key:
@@ -406,7 +403,6 @@ def get_total_supply_uheli():
         logging.error(f"Lỗi khi lấy supply: {e}")
         return None
 
-
 def get_tx_last_7d(address):
     url = "https://lcd.helichain.com/cosmos/tx/v1beta1/txs"
     end_time = datetime.now(timezone.utc)             # UTC aware
@@ -436,7 +432,7 @@ def get_tx_last_7d(address):
                     ts = ts.astimezone(timezone.utc)
 
                 except Exception as e:
-                    logging.warning(f"Lỗi parse timestamp: {e}")
+                    logging.debug(f"Lỗi parse timestamp: {e}")
                     continue
 
                 # ✅ ép start_time và end_time cũng thành UTC aware
@@ -457,7 +453,7 @@ def get_tx_last_7d(address):
                                             val = int(attr["value"].replace("uheli", ""))
                                             total_sent += val / 1_000_000
                                         except Exception as e:
-                                            logging.warning(f"Lỗi parse amount: {e}")
+                                            logging.debug(f"Lỗi parse amount: {e}")
 
             page_key = r.get("pagination", {}).get("next_key")
             if not page_key:
@@ -539,7 +535,6 @@ def get_total_unbonding():
         logging.error(f"Lỗi khi lấy unbonding: {e}")
         return None
 
-
 def get_unbonding_data():
     try:
         url = f"{LCD}/cosmos/staking/v1beta1/unbonding_delegations"
@@ -604,7 +599,6 @@ def get_balance(address):
         logging.error(f"Lỗi get_balance({address}): {e}")
     return 0
 
-
 def get_staked(address):
     """Lấy tổng HELI đang stake"""
     try:
@@ -622,7 +616,6 @@ def get_staked(address):
     except Exception as e:
         logging.error(f"Lỗi get_staked({address}): {e}")
     return 0
-
 
 def get_unstaking(address):
     """Lấy tổng HELI đang unstake"""
@@ -643,10 +636,9 @@ def get_unstaking(address):
         logging.error(f"Lỗi get_unstaking({address}): {e}")
     return 0
 
-
-# -------------------------------
+# ===============================================
 # Commands
-# -------------------------------
+# ===============================================
 # --- Lệnh /start ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -850,7 +842,6 @@ async def heliinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Lỗi khi lấy heliinfo: {e}")
 
-
 # ===========================
 # 2. Dữ liệu giả lập / placeholder
 # ===========================
@@ -919,7 +910,6 @@ async def detect_doilai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "✅ Không phát hiện lệnh mồi."
 
     await update.message.reply_text(msg)
-
 
 # Background task kiểm tra spam lệnh mồi
 async def alert_loop(bot):
@@ -1021,7 +1011,7 @@ async def trend_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df["l"] = df["l"].astype(float)
         df["v"] = df["v"].astype(float)
 
-        print(f"[DEBUG] {tf} - Lấy {len(df)} nến từ MEXC")
+        } nến từ MEXC")
 
         signals, summary = analyze_tf(df)
 
@@ -1321,7 +1311,6 @@ async def bonded_ratio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await sent.edit_text(f"📊 Bonded Ratio: {ratio:.4f}%")
 
-
 async def apy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         await update.message.reply_text("🚫 Bạn chưa được cấp quyền. Dùng /whoami gửi admin.")
@@ -1494,7 +1483,7 @@ async def get_market_price():
 
         return price_usd if price_usd else None
     except Exception as e:
-        print(f"⚠️ Lỗi khi lấy giá: {e}")
+        
         return None
 
 # Lệnh /support_resist
@@ -1602,22 +1591,18 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-
-
-# -------------------------------
+# ===============================================
 # Main
-# -------------------------------
+# ===============================================
 def main():
     from telegram.request import HTTPXRequest
     request = HTTPXRequest(connect_timeout=20, read_timeout=20, write_timeout=20, pool_timeout=20)
     application = Application.builder().token(BOT_TOKEN).request(request).build()
 
-
     # Lệnh quản lý user
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("grant", grant))
     application.add_handler(CommandHandler("revoke", revoke))
-
 
     
     # Đăng ký command
