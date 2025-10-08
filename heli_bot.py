@@ -152,19 +152,41 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 
 # --- Lấy dữ liệu từ API MEXC ---
-async def fetch_ohlcv(symbol: str, interval: str = "1h", limit: int = 200):
+async def fetch_ohlcv(symbol: str, interval: str = "15m", limit: int = 200):
+    """
+    Lấy dữ liệu nến từ MEXC cho cặp symbol, mặc định khung 15 phút.
+    Nếu không có dữ liệu, trả về None.
+    """
     url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
-            data = await resp.json()
+            try:
+                data = await resp.json()
+            except Exception as e:
+                print(f"❌ Lỗi khi đọc JSON MEXC: {e}")
+                return None
+
+            # Kiểm tra phản hồi
+            if not data or isinstance(data, dict):
+                print(f"⚠️ Không có dữ liệu nến {interval} cho {symbol} từ MEXC.")
+                return None
+
             df = pd.DataFrame(data, columns=[
                 "timestamp", "open", "high", "low", "close", "volume",
                 "close_time", "quote_asset_volume", "num_trades",
                 "taker_buy_base", "taker_buy_quote", "ignore"
             ])
+
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+            df = df.astype({
+                "open": float,
+                "high": float,
+                "low": float,
+                "close": float,
+                "volume": float
+            })
             return df
+
 
 
 # --- Tính các chỉ báo kỹ thuật ---
@@ -189,7 +211,7 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["ema200"] = EMAIndicator(close=df["close"], window=200).ema_indicator()
 
     # Bollinger Bands
-    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+    bb = BollingerBands(close=df["close"], window=40, window_dev=2)
     df["bb_upper"] = bb.bollinger_hband()
     df["bb_lower"] = bb.bollinger_lband()
 
@@ -1753,7 +1775,7 @@ async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df = await fetch_ohlcv(symbol)
         df = calculate_indicators(df)
         sig, reasons = generate_signal(df)
-        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 1h\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(reasons[-5:])
+        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 15 phút\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(reasons[-5:])
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi khi xử lý tín hiệu: {e}")
