@@ -1805,19 +1805,16 @@ async def check_auto_signal(app):
 # -------------------------------
 # Main
 # -------------------------------
-def main():
+async def main():
     from telegram.request import HTTPXRequest
     request = HTTPXRequest(connect_timeout=20, read_timeout=20, write_timeout=20, pool_timeout=20)
     application = Application.builder().token(BOT_TOKEN).request(request).build()
-
 
     # Lệnh quản lý user
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("grant", grant))
     application.add_handler(CommandHandler("revoke", revoke))
 
-
-    
     # Đăng ký command
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
@@ -1843,19 +1840,25 @@ def main():
     application.add_handler(CommandHandler("heliinfo", heliinfo))
     application.add_handler(CommandHandler("showusers", showusers_handler))
 
+    # ✅ Chạy task kiểm tra tín hiệu song song
     asyncio.create_task(check_auto_signal(application))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
-    # ✅ Chạy webhook cho Render
+    # ✅ Chạy webhook (Render) hoặc fallback sang polling
     if os.getenv("RENDER") == "true":
         port = int(os.environ.get("PORT", "10000"))
-        application.run_webhook(
+        await application.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=BOT_TOKEN,
             webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
         )
+    else:
+        await application.run_polling()
+
 
 if __name__ == "__main__":
-    main()
+    import logging
+    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+    asyncio.run(main())
