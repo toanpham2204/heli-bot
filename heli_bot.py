@@ -152,40 +152,75 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------------
 
 # --- Lấy dữ liệu từ API MEXC ---
+
 async def fetch_ohlcv(symbol: str, interval: str = "15m", limit: int = 200):
     """
-    Lấy dữ liệu nến từ MEXC cho cặp symbol, mặc định khung 15 phút.
-    Nếu không có dữ liệu, trả về None.
+    Lấy OHLCV từ MEXC. Tự phát hiện schema (8/12/6 cột) và chuẩn hoá
+    thành các cột tối thiểu: timestamp, open, high, low, close, volume.
+    Trả về None nếu không có dữ liệu.
     """
     url = f"https://api.mexc.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            try:
-                data = await resp.json()
-            except Exception as e:
-                print(f"❌ Lỗi khi đọc JSON MEXC: {e}")
-                return None
+        try:
+            async with session.get(url, timeout=20) as resp:
+                text = await resp.text()
+        except Exception as e:
+            print(f"[MEXC] HTTP error: {e}")
+            return None
 
-            # Kiểm tra phản hồi
-            if not data or isinstance(data, dict):
-                print(f"⚠️ Không có dữ liệu nến {interval} cho {symbol} từ MEXC.")
-                return None
+    try:
+        data = json.loads(text)
+    except Exception as e:
+        print(f"[MEXC] JSON decode error: {e} -> {text[:200]}")
+        return None
 
-            df = pd.DataFrame(data, columns=[
-                "timestamp", "open", "high", "low", "close", "volume",
-                "close_time", "quote_asset_volume", "num_trades",
-                "taker_buy_base", "taker_buy_quote", "ignore"
-            ])
+    # Không có dữ liệu
+    if not isinstance(data, list) or len(data) == 0:
+        print(f"[MEXC] Empty klines for {symbol} {interval}: {data}")
+        return None
 
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df = df.astype({
-                "open": float,
-                "high": float,
-                "low": float,
-                "close": float,
-                "volume": float
-            })
-            return df
+    # Chuẩn hoá schema theo số cột trả về
+    ncols = len(data[0])
+    df = pd.DataFrame(data)
+
+    if ncols == 12:
+        # Binance-like: 12 cột
+        df.columns = [
+            "open_time","open","high","low","close","volume",
+            "close_time","quote_asset_volume","num_trades",
+            "taker_buy_base","taker_buy_quote","ignore"
+        ]
+    elif ncols == 8:
+        # MEXC spot: 8 cột (turnover ~ quote_asset_volume)
+        df.columns = [
+            "open_time","open","high","low","close","volume",
+            "close_time","quote_asset_volume"
+        ]
+    elif ncols == 6:
+        # Một số nguồn rút gọn
+        df.columns = ["open_time","open","high","low","close","volume"]
+        df["close_time"] = pd.NA
+        df["quote_asset_volume"] = pd.NA
+    else:
+        # Fallback: lấy 6 cột đầu, bỏ phần thừa
+        base_cols = ["open_time","open","high","low","close","volume"]
+        df = df.iloc[:, :len(base_cols)]
+        df.columns = base_cols
+        df["close_time"] = pd.NA
+        df["quote_asset_volume"] = pd.NA
+
+    # Ép kiểu & đổi tên cột thời gian
+    for col in ["open","high","low","close","volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", errors="coerce")
+    df.rename(columns={"open_time": "timestamp"}, inplace=True)
+
+    # Lọc dòng lỗi/nan tối thiểu cần thiết
+    df = df.dropna(subset=["timestamp","open","high","low","close","volume"])
+
+    return df
+
 
 
 
@@ -1846,9 +1881,20 @@ async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ✅ Phân tích tín hiệu thủ công
     try:
-        df = await fetch_ohlcv(symbol)
+        df = await fetch_ohlcv(symbol, interval="15m", limit=200)
+        if df is None or len(df) == 0:
+            await update.message.reply_text(f"⚠️ Không có dữ liệu nến cho {symbol} trên MEXC.")
+            return
+        if df is None or len(df) < 50:
+            await update.message.reply_text(f"⚠️ Không đủ dữ liệu để phân tích {symbol}.")
+            return
         df = calculate_indicators(df)
+        if len(df) < 5:
+            await update.message.reply_text(f"⚠️ Dữ liệu không đủ để tạo tín hiệu cho {symbol}.")
+            return
+
         sig, reasons = generate_signal(df)
+
         msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 15 phút\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(reasons[-5:])
         await update.message.reply_text(msg)
     except Exception as e:
