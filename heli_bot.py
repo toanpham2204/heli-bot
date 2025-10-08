@@ -1851,6 +1851,19 @@ async def support_resist_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+def format_reasons(reasons: list[str]) -> str:
+    lines = [str(r).strip() for r in reasons if str(r).strip()]
+    # Bỏ tiền tố "- " hoặc "• " nếu đã có, để tránh double-bullet
+    cleaned = []
+    for ln in lines:
+        if ln.startswith("- "):
+            ln = ln[2:]
+        if ln.startswith("• "):
+            ln = ln[2:]
+        cleaned.append(ln)
+    return "- " + "\n- ".join(cleaned) if cleaned else "Không có chi tiết."
+
+
 # --- Handler cho lệnh /signal ---
 async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global ACTIVE_SIGNAL_USERS
@@ -1924,8 +1937,14 @@ async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         sig, reasons = generate_signal(df)
+        analysis_text = format_reasons(reasons)
 
-        msg = f"📊 Tín hiệu {symbol}\n⏱️ Khung 15 phút\nKết luận: {sig}\n\n🔍 Phân tích:\n- " + "\n- ".join(analysis_lines)
+        msg = (
+            f"📊 Tín hiệu {symbol}\n"
+            f"⏱️ Khung 15 phút\n"
+            f"Kết luận: {sig}\n\n"
+            f"🔍 Phân tích:\n{analysis_text}"
+        )
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi khi xử lý tín hiệu: {e}")
