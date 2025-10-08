@@ -1843,7 +1843,7 @@ def main():
     application.add_handler(CommandHandler("heliinfo", heliinfo))
     application.add_handler(CommandHandler("showusers", showusers_handler))
 
-    application.job_queue.run_once(lambda ctx: asyncio.create_task(check_auto_signal(app)), 5)
+    asyncio.create_task(check_auto_signal(application))
 
     logging.info("🚀 Bot HeliChain đã khởi động...")
 
